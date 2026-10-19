@@ -51,14 +51,40 @@ class DepthLSSInterfaceTest(unittest.TestCase):
             model.eval()
             views = torch.eye(4).reshape(1, 1, 4, 4)
             ego = torch.eye(4).reshape(1, 4, 4)
-            points = [torch.tensor([[1., 1., 2., 50., 0.]])]
+            # First two points hit one pixel after undoing augmentation. The
+            # nearest depth must win; a point behind the camera must be absent.
+            ego[:, 0, 3] = 1.
+            points = [torch.tensor([[3., 1., 2., 50., 0.],
+                                    [5., 2., 4., 60., 0.],
+                                    [1., 0., -1., 70., 0.]])]
             original = points[0].clone()
+            original_get_cam_feats = model.get_cam_feats
+            def checked_feats(x, depth, mats):
+                self.assertEqual(int(torch.count_nonzero(depth)), 1)
+                self.assertEqual(float(depth[0, 0, 0, 0, 1]), 2.)
+                return original_get_cam_feats(x, depth, mats)
+            model.get_cam_feats = checked_feats
             with torch.no_grad():
                 output = model(torch.ones(1, 1, 8, 4, 4), points, None,
                                views, ego, views, views, views, views, views, ego, [{}])
             self.assertEqual(tuple(output.shape), (1, 4, 4, 4))
             self.assertTrue(torch.isfinite(output).all())
             torch.testing.assert_close(points[0], original)
+            with self.subTest('BEV lower bound must exclude points below range'):
+                base = modules['mmdet3d.models.vtransforms.base']
+                captured = {}
+                def fake_cuda_pool(features, coordinates, batch, depth_bins, x_bins, y_bins):
+                    captured['coordinates'] = coordinates
+                    return torch.zeros(batch, 4, depth_bins, x_bins, y_bins)
+                base.bev_pool = fake_cuda_pool
+                # xbound starts at -4. The first point is outside; the second
+                # is inside voxel x=0. Integer truncation used to keep both.
+                geometry = torch.tensor([[-4.1, 0., 0.], [-3.9, 0., 0.]]).reshape(1, 1, 1, 1, 2, 3)
+                lifted = torch.ones(1, 1, 1, 1, 2, 4)
+                pooled = base.BaseTransform.bev_pool(model, geometry, lifted)
+                self.assertEqual(len(captured['coordinates']), 1)
+                self.assertEqual(int(captured['coordinates'][0, 0]), 0)
+                self.assertEqual(tuple(pooled.shape), (1, 4, 8, 8))
 
 
 if __name__ == '__main__':

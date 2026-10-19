@@ -57,6 +57,22 @@ def check_pipeline(config_path, root):
     cfg = Config(recursive_eval(configs))
     for split in ('train', 'val'):
         dataset = build_dataset(cfg.data[split])
+        raw = dataset.get_data_info(0)
+        expected_centers = dataset.data_infos[0]['gt_boxes'][:, :3]
+        np.testing.assert_allclose(raw['ann_info']['gt_bboxes_3d'].gravity_center.numpy(),
+                                   expected_centers, atol=1e-5)
+        np.testing.assert_allclose(raw['lidar2ego'], np.eye(4), atol=1e-6)
+        if cfg.use_camera:
+            expected_cameras = ['CAM_P_F', 'CAM_P_FL', 'CAM_P_FR',
+                                'CAM_P_B', 'CAM_P_LB', 'CAM_P_RB']
+            assert dataset.metadata['cameras'] == expected_cameras
+            assert len(raw['image_paths']) == 6
+            for i in range(6):
+                np.testing.assert_allclose(raw['camera2lidar'][i] @ raw['lidar2camera'][i],
+                                           np.eye(4), atol=1e-5)
+                np.testing.assert_allclose(raw['camera2ego'][i], raw['camera2lidar'][i])
+                np.testing.assert_allclose(raw['lidar2image'][i],
+                                           raw['camera_intrinsics'][i] @ raw['lidar2camera'][i])
         sample = dataset[0]
         required = {'img', 'points', 'gt_bboxes_3d', 'gt_labels_3d', 'metas', 'depths',
                     'camera2ego', 'lidar2ego', 'lidar2camera', 'lidar2image',
@@ -65,6 +81,17 @@ def check_pipeline(config_path, root):
         assert sample['points'].data.shape[1] == 5
         assert sample['gt_bboxes_3d'].data.tensor.shape[1] == 7
         assert len(sample['gt_bboxes_3d'].data) > 0
+        if cfg.use_camera:
+            assert tuple(sample['img'].data.shape) == (6, 3, *cfg.image_size)
+            for key in ('camera2ego', 'lidar2camera', 'lidar2image', 'camera_intrinsics',
+                        'camera2lidar', 'img_aug_matrix'):
+                assert tuple(sample[key].data.shape) == (6, 4, 4), key
+            vtransform = cfg.model.encoders.camera.vtransform
+            factor = cfg.model.heads.object.test_cfg.out_size_factor
+            for axis, bound in enumerate((vtransform.xbound, vtransform.ybound)):
+                camera_bins = round((bound[1] - bound[0]) / bound[2] / vtransform.downsample)
+                lidar_bins = cfg.model.heads.object.test_cfg.grid_size[axis] // factor
+                assert camera_bins == lidar_bins, 'Camera/LiDAR BEV resolutions differ'
         batch = collate([sample], samples_per_gpu=1)
         print('{} pipeline/collate OK: {} points, img {}'.format(
             split, len(sample['points'].data), tuple(sample['img'].data.shape)))

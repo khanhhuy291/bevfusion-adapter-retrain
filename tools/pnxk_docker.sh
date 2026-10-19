@@ -11,7 +11,7 @@ case "$task_action" in
   prepare)
     # Reuses binaries compiled for this image's Python/Torch/CUDA ABI. These
     # gitignored files must be refreshed if the runtime image changes.
-    docker run --rm --user "$task_user" --entrypoint python \
+    exec docker run --rm --user "$task_user" --entrypoint python \
       -v "$task_root:/host" "$task_image" -c '
 from pathlib import Path
 import shutil
@@ -28,20 +28,28 @@ for file in files:
 print("Copied", len(files), "CUDA extensions")
 '
     ;;
-  check|train)
+  check|train|check-fusion|train-fusion|audit-fusion)
+    task_config=configs/pnxk/lidar.yaml
+    task_run=runs/pnxk-lidar-single-gpu
+    if [[ "$task_action" == *fusion ]]; then
+      task_config=configs/pnxk/fusion.yaml
+      task_run=runs/pnxk-fusion-single-gpu
+    fi
     task_docker=(docker run --rm --gpus all --user "$task_user" --shm-size 2g
       --entrypoint python -v "$task_root:/work" -w /work
       -e PYTHONPATH=/work -e MPLCONFIGDIR=/tmp/pnxk-mpl "$task_image")
-    if [[ "$task_action" == check ]]; then
-      "${task_docker[@]}" tools/check_pnxk.py --root data/pnxk \
-        --pipeline-config configs/pnxk/lidar.yaml "$@"
+    if [[ "$task_action" == audit-fusion ]]; then
+      exec "${task_docker[@]}" tools/check_pnxk_fusion.py "$@"
+    elif [[ "$task_action" == check* ]]; then
+      exec "${task_docker[@]}" tools/check_pnxk.py --root data/pnxk \
+        --pipeline-config "$task_config" "$@"
     else
-      "${task_docker[@]}" tools/train.py configs/pnxk/lidar.yaml --launcher none \
-        --run-dir runs/pnxk-lidar-single-gpu --max_epochs 1 "$@"
+      exec "${task_docker[@]}" tools/train.py "$task_config" --launcher none \
+        --run-dir "$task_run" --max_epochs 1 "$@"
     fi
     ;;
   *)
-    echo 'Usage: bash tools/pnxk_docker.sh {prepare|check|train} [additional arguments]' >&2
+    echo 'Usage: bash tools/pnxk_docker.sh {prepare|check|train|check-fusion|audit-fusion|train-fusion} [additional arguments]' >&2
     exit 2
     ;;
 esac

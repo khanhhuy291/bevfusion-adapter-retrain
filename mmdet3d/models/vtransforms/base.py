@@ -146,7 +146,9 @@ class BaseTransform(nn.Module):
         x = x.reshape(Nprime, C)
 
         # flatten indices
-        geom_feats = ((geom_feats - (self.bx - self.dx / 2.0)) / self.dx).long()
+        # Truncating -0.1 to 0 would incorrectly admit points just outside the
+        # lower BEV bound. Voxel indices must use floor before range filtering.
+        geom_feats = ((geom_feats - (self.bx - self.dx / 2.0)) / self.dx).floor().long()
         geom_feats = geom_feats.view(Nprime, 3)
         batch_ix = torch.cat(
             [
@@ -281,7 +283,9 @@ class BaseDepthTransform(BaseTransform):
 
 
         for b in range(batch_size):
-            cur_coords = points[b][:, :3]
+            # Camera projection must not modify the points later voxelized by
+            # the LiDAR encoder (particularly when augmentation translates them).
+            cur_coords = points[b][:, :3].clone()
             cur_img_aug_matrix = img_aug_matrix[b]
             cur_lidar_aug_matrix = lidar_aug_matrix[b]
             cur_lidar2image = lidar2image[b]
@@ -295,7 +299,7 @@ class BaseDepthTransform(BaseTransform):
             cur_coords = cur_lidar2image[:, :3, :3].matmul(cur_coords)
             cur_coords += cur_lidar2image[:, :3, 3].reshape(-1, 3, 1)
             # get 2d coords
-            dist = cur_coords[:, 2, :]
+            dist = cur_coords[:, 2, :].clone()
             cur_coords[:, 2, :] = torch.clamp(cur_coords[:, 2, :], 1e-5, 1e5)
             cur_coords[:, :2, :] /= cur_coords[:, 2:3, :]
 
@@ -312,12 +316,30 @@ class BaseDepthTransform(BaseTransform):
                 & (cur_coords[..., 0] >= 0)
                 & (cur_coords[..., 1] < self.image_size[1])
                 & (cur_coords[..., 1] >= 0)
+                & (dist > 0)
+                & torch.isfinite(dist)
+                & torch.isfinite(cur_coords).all(dim=-1)
             )
             for c in range(on_img.shape[0]):
                 masked_coords = cur_coords[c, on_img[c]].long()
                 masked_dist = dist[c, on_img[c]]
+                if self.add_depth_features:
+                    masked_features = points[b][on_img[c]]
 
                 if self.depth_input == 'scalar':
+                    # Resolve duplicate pixels by nearest positive camera depth,
+                    # rather than CUDA's undefined last-writer assignment order.
+                    pixel = masked_coords[:, 0] * self.image_size[1] + masked_coords[:, 1]
+                    order = masked_dist.argsort()
+                    order = order[pixel[order].argsort(stable=True)]
+                    sorted_pixel = pixel[order]
+                    first = torch.ones_like(sorted_pixel, dtype=torch.bool)
+                    first[1:] = sorted_pixel[1:] != sorted_pixel[:-1]
+                    nearest = order[first]
+                    masked_coords = masked_coords[nearest]
+                    masked_dist = masked_dist[nearest]
+                    if self.add_depth_features:
+                        masked_features = masked_features[nearest]
                     depth[b, c, 0, masked_coords[:, 0], masked_coords[:, 1]] = masked_dist
                 elif self.depth_input == 'one-hot':
                     # Clamp depths that are too big to D
@@ -326,7 +348,7 @@ class BaseDepthTransform(BaseTransform):
                     depth[b, c, masked_dist.long(), masked_coords[:, 0], masked_coords[:, 1]] = 1.0
 
                 if self.add_depth_features:
-                    depth[b, c, -points[b].shape[-1]:, masked_coords[:, 0], masked_coords[:, 1]] = points[b][boolmask2idx(on_img[c])].transpose(0,1)
+                    depth[b, c, -points[b].shape[-1]:, masked_coords[:, 0], masked_coords[:, 1]] = masked_features.transpose(0, 1)
 
         extra_rots = lidar_aug_matrix[..., :3, :3]
         extra_trans = lidar_aug_matrix[..., :3, 3]

@@ -1,5 +1,8 @@
 # Adapt BEVFusion cho PNXK
 
+Giải thích từng bước, input/output và lý do sửa code:
+[pnxk-pipeline-explained.md](pnxk-pipeline-explained.md).
+
 ## Trạng thái triển khai
 
 Đã thêm converter, PNXKDataset, config LiDAR-only/fusion, kiểm tra cache và
@@ -109,7 +112,8 @@ python tools/check_pnxk.py --root data/pnxk --pipeline-config configs/pnxk/fusio
 
 Pipeline LiDAR-only đã chạy thành công trong container cho train và val.
 Python base trên host vẫn thiếu dependency; dùng wrapper Docker ở tài liệu
-môi trường để chạy. Pipeline fusion chưa được chạy trong bước LiDAR-only này.
+môi trường để chạy. Fusion cũng đã hoàn thành train/validation; xem
+[pnxk-fusion.md](pnxk-fusion.md) để chạy và xem các kiểm tra logic.
 
 Do đã thay đổi cấu trúc cache, có thêm kiểm tra tích hợp convert nhiều recording,
 mỗi recording nhiều chunk, để bảo đảm split không bị chia lại theo frame/chunk
