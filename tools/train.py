@@ -18,12 +18,15 @@ from mmdet3d.utils import get_root_logger, convert_sync_batchnorm, recursive_eva
 
 
 def main():
-    dist.init()
-
     parser = argparse.ArgumentParser()
     parser.add_argument("config", metavar="FILE", help="config file")
     parser.add_argument("--run-dir", metavar="DIR", help="run directory")
+    parser.add_argument("--launcher", choices=["mpi", "none"], default="mpi",
+                        help="Use none for a single GPU without MPI/NCCL initialization")
     args, opts = parser.parse_known_args()
+    distributed = args.launcher == "mpi"
+    if distributed:
+        dist.init()
 
     configs.load(args.config, recursive=True)
     configs.update(opts)
@@ -77,7 +80,7 @@ def main():
         model,
         datasets,
         cfg,
-        distributed=True,
+        distributed=distributed,
         validate=True,
         timestamp=timestamp,
     )

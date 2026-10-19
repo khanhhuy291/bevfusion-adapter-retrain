@@ -1,0 +1,2 @@
+# Inherits configs/default.yaml and configs/pnxk/default.yaml via torchpack.
+use_camera: false

@@ -1,0 +1,471 @@
+# PNXK debug baseline: single sweep, no velocity, no database sampling.
+# Point frame is ego. Augmentation is disabled for the initial overfit check.
+seed: 0
+deterministic: false
+checkpoint_config:
+  interval: 1
+  max_keep_ckpts: 1
+log_config:
+  interval: 10
+  hooks:
+  - type: TextLoggerHook
+load_from: null
+resume_from: null
+cudnn_benchmark: false
+fp16: null
+max_epochs: 2
+runner:
+  type: CustomEpochBasedRunner
+  max_epochs: ${max_epochs}
+model:
+  decoder:
+    backbone:
+      type: SECOND
+      in_channels: 256
+      out_channels:
+      - 128
+      - 256
+      layer_nums:
+      - 5
+      - 5
+      layer_strides:
+      - 1
+      - 2
+      norm_cfg:
+        type: BN
+        eps: 0.001
+        momentum: 0.01
+      conv_cfg:
+        type: Conv2d
+        bias: false
+    neck:
+      type: SECONDFPN
+      in_channels:
+      - 128
+      - 256
+      out_channels:
+      - 256
+      - 256
+      upsample_strides:
+      - 1
+      - 2
+      norm_cfg:
+        type: BN
+        eps: 0.001
+        momentum: 0.01
+      upsample_cfg:
+        type: deconv
+        bias: false
+      use_conv_for_no_stride: true
+  heads:
+    object:
+      in_channels: 512
+      type: TransFusionHead
+      num_proposals: 200
+      auxiliary: true
+      hidden_channel: 128
+      num_classes: 3
+      num_decoder_layers: 1
+      num_heads: 8
+      nms_kernel_size: 3
+      ffn_channel: 256
+      dropout: 0.1
+      bn_momentum: 0.1
+      activation: relu
+      train_cfg:
+        dataset: PNXK
+        point_cloud_range: ${point_cloud_range}
+        grid_size:
+        - 1024
+        - 1024
+        - 40
+        voxel_size: ${voxel_size}
+        out_size_factor: 8
+        gaussian_overlap: 0.1
+        min_radius: 2
+        pos_weight: -1
+        code_weights:
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+        - 1.0
+        assigner:
+          type: HungarianAssigner3D
+          iou_calculator:
+            type: BboxOverlaps3D
+            coordinate: lidar
+          cls_cost:
+            type: FocalLossCost
+            gamma: 2.0
+            alpha: 0.25
+            weight: 0.15
+          reg_cost:
+            type: BBoxBEVL1Cost
+            weight: 0.25
+          iou_cost:
+            type: IoU3DCost
+            weight: 0.25
+      test_cfg:
+        dataset: PNXK
+        grid_size:
+        - 1024
+        - 1024
+        - 40
+        out_size_factor: 8
+        voxel_size: ${voxel_size[:2]}
+        pc_range: ${point_cloud_range[:2]}
+        nms_type: null
+      common_heads:
+        center:
+        - 2
+        - 2
+        height:
+        - 1
+        - 2
+        dim:
+        - 3
+        - 2
+        rot:
+        - 2
+        - 2
+      bbox_coder:
+        type: TransFusionBBoxCoder
+        pc_range: ${point_cloud_range[:2]}
+        post_center_range:
+        - -61.2
+        - -61.2
+        - -10.0
+        - 61.2
+        - 61.2
+        - 10.0
+        score_threshold: 0.0
+        out_size_factor: 8
+        voxel_size: ${voxel_size[:2]}
+        code_size: 8
+      loss_cls:
+        type: FocalLoss
+        use_sigmoid: true
+        gamma: 2.0
+        alpha: 0.25
+        reduction: mean
+        loss_weight: 1.0
+      loss_heatmap:
+        type: GaussianFocalLoss
+        reduction: mean
+        loss_weight: 1.0
+      loss_bbox:
+        type: L1Loss
+        reduction: mean
+        loss_weight: 0.25
+  encoders:
+    lidar:
+      voxelize:
+        max_num_points: 10
+        point_cloud_range: ${point_cloud_range}
+        voxel_size: ${voxel_size}
+        max_voxels:
+        - 90000
+        - 120000
+      backbone:
+        type: SparseEncoder
+        in_channels: 5
+        sparse_shape:
+        - 1024
+        - 1024
+        - 41
+        output_channels: 128
+        order:
+        - conv
+        - norm
+        - act
+        encoder_channels:
+        - - 16
+          - 16
+          - 32
+        - - 32
+          - 32
+          - 64
+        - - 64
+          - 64
+          - 128
+        - - 128
+          - 128
+        encoder_paddings:
+        - - 0
+          - 0
+          - 1
+        - - 0
+          - 0
+          - 1
+        - - 0
+          - 0
+          - - 1
+            - 1
+            - 0
+        - - 0
+          - 0
+        block_type: basicblock
+    camera: null
+  type: BEVFusion
+  fuser: null
+optimizer:
+  type: AdamW
+  lr: 0.0001
+  weight_decay: 0.01
+optimizer_config:
+  grad_clip:
+    max_norm: 35
+    norm_type: 2
+lr_config:
+  policy: CosineAnnealing
+  min_lr_ratio: 0.001
+momentum_config: null
+dataset_root: data/pnxk/
+object_classes:
+- car
+- rider
+- pedestrian
+use_camera: false
+image_size:
+- 256
+- 704
+point_cloud_range:
+- -51.2
+- -51.2
+- -5.0
+- 51.2
+- 51.2
+- 3.0
+voxel_size:
+- 0.1
+- 0.1
+- 0.2
+lidar_test_pipeline:
+- type: LoadPointsFromFile
+  coord_type: LIDAR
+  load_dim: 5
+  use_dim: 5
+  reduce_beams: null
+- type: LoadAnnotations3D
+  with_bbox_3d: true
+  with_label_3d: true
+- type: GlobalRotScaleTrans
+  resize_lim:
+  - 1.0
+  - 1.0
+  rot_lim:
+  - 0.0
+  - 0.0
+  trans_lim: 0.0
+  is_train: false
+- type: PointsRangeFilter
+  point_cloud_range: ${point_cloud_range}
+- type: DefaultFormatBundle3D
+  classes: ${object_classes}
+- type: PNXKCollect3D
+  keys:
+  - points
+  - gt_bboxes_3d
+  - gt_labels_3d
+  meta_keys: &id001
+  - camera_intrinsics
+  - camera2ego
+  - lidar2ego
+  - lidar2camera
+  - lidar2image
+  - camera2lidar
+  - img_aug_matrix
+  - lidar_aug_matrix
+lidar_train_pipeline:
+- type: LoadPointsFromFile
+  coord_type: LIDAR
+  load_dim: 5
+  use_dim: 5
+  reduce_beams: null
+- type: LoadAnnotations3D
+  with_bbox_3d: true
+  with_label_3d: true
+- type: GlobalRotScaleTrans
+  resize_lim:
+  - 1.0
+  - 1.0
+  rot_lim:
+  - 0.0
+  - 0.0
+  trans_lim: 0.0
+  is_train: false
+- type: PointsRangeFilter
+  point_cloud_range: ${point_cloud_range}
+- type: ObjectRangeFilter
+  point_cloud_range: ${point_cloud_range}
+- type: ObjectNameFilter
+  classes: ${object_classes}
+- type: PointShuffle
+- type: DefaultFormatBundle3D
+  classes: ${object_classes}
+- type: PNXKCollect3D
+  keys:
+  - points
+  - gt_bboxes_3d
+  - gt_labels_3d
+  meta_keys: *id001
+fusion_test_pipeline:
+- type: LoadMultiViewImageFromFiles
+- type: LoadPointsFromFile
+  coord_type: LIDAR
+  load_dim: 5
+  use_dim: 5
+  reduce_beams: null
+- type: LoadAnnotations3D
+  with_bbox_3d: true
+  with_label_3d: true
+- type: ImageAug3D
+  final_dim: ${image_size}
+  resize_lim:
+  - 0.48
+  - 0.48
+  bot_pct_lim:
+  - 0.0
+  - 0.0
+  rot_lim:
+  - 0.0
+  - 0.0
+  rand_flip: false
+  is_train: false
+- type: GlobalRotScaleTrans
+  resize_lim:
+  - 1.0
+  - 1.0
+  rot_lim:
+  - 0.0
+  - 0.0
+  trans_lim: 0.0
+  is_train: false
+- type: PointsRangeFilter
+  point_cloud_range: ${point_cloud_range}
+- type: ImageNormalize
+  mean:
+  - 0.485
+  - 0.456
+  - 0.406
+  std:
+  - 0.229
+  - 0.224
+  - 0.225
+- type: DefaultFormatBundle3D
+  classes: ${object_classes}
+- type: PNXKCollect3D
+  keys:
+  - img
+  - points
+  - gt_bboxes_3d
+  - gt_labels_3d
+  meta_keys: *id001
+fusion_train_pipeline:
+- type: LoadMultiViewImageFromFiles
+- type: LoadPointsFromFile
+  coord_type: LIDAR
+  load_dim: 5
+  use_dim: 5
+  reduce_beams: null
+- type: LoadAnnotations3D
+  with_bbox_3d: true
+  with_label_3d: true
+- type: ImageAug3D
+  final_dim: ${image_size}
+  resize_lim:
+  - 0.48
+  - 0.48
+  bot_pct_lim:
+  - 0.0
+  - 0.0
+  rot_lim:
+  - 0.0
+  - 0.0
+  rand_flip: false
+  is_train: false
+- type: GlobalRotScaleTrans
+  resize_lim:
+  - 1.0
+  - 1.0
+  rot_lim:
+  - 0.0
+  - 0.0
+  trans_lim: 0.0
+  is_train: false
+- type: PointsRangeFilter
+  point_cloud_range: ${point_cloud_range}
+- type: ObjectRangeFilter
+  point_cloud_range: ${point_cloud_range}
+- type: ObjectNameFilter
+  classes: ${object_classes}
+- type: PointShuffle
+- type: ImageNormalize
+  mean:
+  - 0.485
+  - 0.456
+  - 0.406
+  std:
+  - 0.229
+  - 0.224
+  - 0.225
+- type: DefaultFormatBundle3D
+  classes: ${object_classes}
+- type: PNXKCollect3D
+  keys:
+  - img
+  - points
+  - gt_bboxes_3d
+  - gt_labels_3d
+  meta_keys: *id001
+train_pipeline: ${fusion_train_pipeline if use_camera else lidar_train_pipeline}
+test_pipeline: ${fusion_test_pipeline if use_camera else lidar_test_pipeline}
+data:
+  samples_per_gpu: 1
+  workers_per_gpu: 0
+  train:
+    type: PNXKDataset
+    dataset_root: ${dataset_root}
+    ann_file: ${dataset_root + "pnxk_infos_train.pkl"}
+    classes: ${object_classes}
+    point_cloud_range: ${point_cloud_range}
+    modality:
+      use_camera: ${use_camera}
+      use_lidar: true
+    pipeline: ${train_pipeline}
+    box_type_3d: LiDAR
+    test_mode: false
+    filter_empty_gt: true
+  val:
+    type: PNXKDataset
+    dataset_root: ${dataset_root}
+    ann_file: ${dataset_root + "pnxk_infos_val.pkl"}
+    classes: ${object_classes}
+    point_cloud_range: ${point_cloud_range}
+    modality:
+      use_camera: ${use_camera}
+      use_lidar: true
+    pipeline: ${test_pipeline}
+    box_type_3d: LiDAR
+    test_mode: true
+    filter_empty_gt: false
+  test:
+    type: PNXKDataset
+    dataset_root: ${dataset_root}
+    ann_file: ${dataset_root + "pnxk_infos_val.pkl"}
+    classes: ${object_classes}
+    point_cloud_range: ${point_cloud_range}
+    modality:
+      use_camera: ${use_camera}
+      use_lidar: true
+    pipeline: ${test_pipeline}
+    box_type_3d: LiDAR
+    test_mode: true
+    filter_empty_gt: false
+evaluation:
+  interval: 1
+  metric: center_distance

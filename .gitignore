@@ -136,3 +136,7 @@ runs/*
 # torch hipify generated files
 *_hip.*
 *.hip
+
+Data-PNXK/*
+outputs/*
+
