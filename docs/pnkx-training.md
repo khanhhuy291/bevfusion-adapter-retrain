@@ -1,11 +1,24 @@
-# Adapt BEVFusion cho PNXK
+# Adapt BEVFusion cho PNKX
+
+> **Cập nhật profile nuScenes:** Các thông số/kết quả bên dưới mô tả bản debug
+> BEV 128 cũ. Xem [profile mới và cách chạy](pnkx-nuscenes-profile.md) cho BEV 180,
+> FP16, CBGS, augmentation và lịch train theo nuScenes. Đã sửa thêm quy ước
+> LWH/yaw → WLH/yaw legacy ở dataset; checkpoint debug cũ cần train lại.
+> Các lệnh wrapper có hậu tố `-debug` dưới đây dùng config debug hiện hành.
+
+
+Tên chuẩn hiện tại là **PNKX**. Các kết quả train/verify ngày 19/10/2026 bên dưới
+là lịch sử của mẫu VF6_01. Converter hiện đã map camera sau VF6_03 từ
+`CAM_P_B_New`, dùng calibration cùng tên; xem profile mới bên dưới.
+Xem [đối chiếu PNKX/nuScenes và trạng thái split mới](pnkx-vs-nuscenes.md).
+Các link `runs/pnxk-*`, `outputs/pnxk-*` được giữ để trỏ đúng artifact lịch sử.
 
 Giải thích từng bước, input/output và lý do sửa code:
-[pnxk-pipeline-explained.md](pnxk-pipeline-explained.md).
+[pnkx-pipeline-explained.md](pnkx-pipeline-explained.md).
 
 ## Trạng thái triển khai
 
-Đã thêm converter, PNXKDataset, config LiDAR-only/fusion, kiểm tra cache và
+Đã thêm converter, PNKXDataset, config LiDAR-only/fusion, kiểm tra cache và
 evaluator chẩn đoán. Bộ mẫu đã chuyển đổi: 171 sample train, 171 sample val,
 6 camera/sample, không bỏ frame hay chunk. Cache hiện tại khoảng 1,6 GB.
 
@@ -13,8 +26,8 @@ evaluator chẩn đoán. Bộ mẫu đã chuyển đổi: 171 sample train, 171 
 Kiểm tra ngoài sandbox xác nhận driver hoạt động; lỗi NVIDIA-SMI trước đó do
 quyền truy cập thiết bị trong sandbox. Đã nạp/collate batch train và val thật
 qua MMDetection. Đã hoàn thành 1 epoch train (171 iteration) và validation 171 frame,
-lưu checkpoint tại `runs/pnxk-lidar-single-gpu/epoch_1.pth`.
-Chi tiết môi trường và cách chạy tại [pnxk-environment.md](pnxk-environment.md).
+lưu checkpoint tại `runs/pnkx-lidar-single-gpu/epoch_1.pth`.
+Chi tiết môi trường và cách chạy tại [pnkx-environment.md](pnkx-environment.md).
 
 ## 1. Quy tắc dữ liệu
 
@@ -31,26 +44,27 @@ Chi tiết môi trường và cách chạy tại [pnxk-environment.md](pnxk-envi
 - Giai đoạn này dùng một sweep LIDAR_TOP. Không ghép LiDAR phụ, radar hay sweep lịch sử.
 - Cache point gồm float32 `[x_ego, y_ego, z_ego, intensity_raw, sweep_dt=0]`.
   Giữ intensity gốc; không giảm beam. Point TOP đã transform sensor → ego.
-- Box cache giữ tâm hình học. Dataset dùng `origin=(0.5, 0.5, 0.5)` để framework
-  chuyển sang tâm đáy. Không cộng velocity giả.
+- Box cache giữ tâm hình học và LWH/yaw raw. Dataset đổi sang WLH và
+  `yaw_internal=-yaw_raw-π/2` theo quy ước legacy của repo, rồi dùng
+  `origin=(0.5, 0.5, 0.5)` để chuyển sang tâm đáy. Không cộng velocity giả.
 - Class order cố định: `car`, `rider`, `pedestrian`.
 - Giữ box có annotation point-count bằng 0. Trường count được lưu tham khảo,
   chưa dùng để lọc hay coi là số điểm TOP đã tính lại.
 
 Chiều extrinsics và giới hạn kiểm chứng được ghi trong
-[pnxk-data-verification.md](pnxk-data-verification.md).
+[pnkx-data-verification.md](pnkx-data-verification.md).
 
 ## 2. Convert
 
 Dependency riêng cho tiền xử lý: NumPy, laspy, lazrs; thêm OpenCV cho camera.
-Trong phiên triển khai đã cài thư viện tạm vào `/tmp/pnxk-inspect-deps`, chạy:
+Trong phiên triển khai đã cài thư viện tạm vào `/tmp/pnkx-inspect-deps`, chạy:
 
 ```bash
-PYTHONPATH=/tmp/pnxk-inspect-deps python tools/data_converter/pnxk_converter.py \
-  --root Data-PNXK \
-  --train-split Data-PNXK/split/train.txt \
-  --val-split Data-PNXK/split/val.txt \
-  --output data/pnxk \
+PYTHONPATH=/tmp/pnkx-inspect-deps python tools/data_converter/pnkx_converter.py \
+  --root Data-PNKX \
+  --train-split Data-PNKX/split/train.txt \
+  --val-split Data-PNKX/split/val.txt \
+  --output data/pnkx \
   --allow-split-overlap \
   --with-cameras \
   --camera-extrinsics ego-to-camera \
@@ -64,7 +78,7 @@ cho mọi xe/ngày. Không có fallback sang camera khác khi calibration thiế
 
 Muốn convert LiDAR-only thì bỏ ba tùy chọn `--with-cameras`,
 `--camera-extrinsics`, `--distortion-model`. Nên dùng output khác, ví dụ
-`data/pnxk-lidar`, để phân biệt hai cache. Cache fusion dùng được cho cả hai config.
+`data/pnkx-lidar`, để phân biệt hai cache. Cache fusion dùng được cho cả hai config.
 
 Để kiểm tra nhanh, thêm `--max-frames-per-chunk 3` và chọn output riêng.
 Khi train thật bỏ `--allow-split-overlap` và giới hạn số frame.
@@ -76,9 +90,9 @@ metadata mới quyết định sample nào được nạp.
 Đầu ra:
 
 ```text
-data/pnxk/
-├── pnxk_infos_train.pkl
-├── pnxk_infos_val.pkl
+data/pnkx/
+├── pnkx_infos_train.pkl
+├── pnkx_infos_val.pkl
 ├── conversion_report.json
 ├── points/<recording>/<chunk>/<timestamp>.bin
 └── images/<recording>/<chunk>/<camera>/<timestamp>.jpg
@@ -96,8 +110,8 @@ NumPy cũ của môi trường train.
 Kiểm tra cache trên CPU, không cần mmcv/CUDA:
 
 ```bash
-python tools/check_pnxk.py --root data/pnxk
-PYTHONPATH=/tmp/pnxk-inspect-deps python -m unittest discover -s tests -v
+python tools/check_pnkx.py --root data/pnkx
+PYTHONPATH=/tmp/pnkx-inspect-deps python -m unittest discover -s tests -v
 ```
 
 Checker đọc toàn bộ point/ảnh của các split, kiểm tra schema, ID, class,
@@ -106,14 +120,14 @@ số chiều point, single-sweep time lag và ma trận camera khả nghịch.
 Trong môi trường train đúng dependency, kiểm tra dataset/pipeline/collate thật:
 
 ```bash
-python tools/check_pnxk.py --root data/pnxk --pipeline-config configs/pnxk/lidar.yaml
-python tools/check_pnxk.py --root data/pnxk --pipeline-config configs/pnxk/fusion.yaml
+python tools/check_pnkx.py --root data/pnkx --pipeline-config configs/pnkx/lidar.yaml
+python tools/check_pnkx.py --root data/pnkx --pipeline-config configs/pnkx/fusion.yaml
 ```
 
 Pipeline LiDAR-only đã chạy thành công trong container cho train và val.
 Python base trên host vẫn thiếu dependency; dùng wrapper Docker ở tài liệu
 môi trường để chạy. Fusion cũng đã hoàn thành train/validation; xem
-[pnxk-fusion.md](pnxk-fusion.md) để chạy và xem các kiểm tra logic.
+[pnkx-fusion.md](pnkx-fusion.md) để chạy và xem các kiểm tra logic.
 
 Do đã thay đổi cấu trúc cache, có thêm kiểm tra tích hợp convert nhiều recording,
 mỗi recording nhiều chunk, để bảo đảm split không bị chia lại theo frame/chunk
@@ -127,9 +141,9 @@ không chứng minh CUDA pooling hay toàn bộ model hoạt động.
 
 ## 4. Config và chạy train
 
-- `configs/pnxk/default.yaml`: model chung, dataset và pipeline debug.
-- `configs/pnxk/lidar.yaml`: chỉ LiDAR.
-- `configs/pnxk/fusion.yaml`: sáu camera + LiDAR, Swin-T + DepthLSS + ConvFuser.
+- `configs/pnkx/default.yaml`: model chung, dataset và pipeline debug.
+- `configs/pnkx/lidar.yaml`: chỉ LiDAR.
+- `configs/pnkx/fusion.yaml`: sáu camera + LiDAR, Swin-T + DepthLSS + ConvFuser.
 
 Config dùng cơ chế load recursive của torchpack giống repo gốc. Mặc định batch 1,
 workers 0, 2 epoch, FP32, tắt augmentation để kiểm tra luồng ban đầu. Phạm vi
@@ -137,31 +151,31 @@ ego `[-51.2, -51.2, -5, 51.2, 51.2, 3]`, voxel `[0.1, 0.1, 0.2]`.
 Train lọc box theo ObjectRangeFilter; evaluator lọc tâm box theo phạm vi 3D.
 
 Head TransFusion có 3 class và code 8 chiều (center, height, log-dim, sin/cos yaw),
-không có velocity. Xử lý peak cho rider/pedestrian dùng chỉ số class PNXK;
+không có velocity. Xử lý peak cho rider/pedestrian dùng chỉ số class PNKX;
 không truy cập class 8/9 của nuScenes. NMS đang tắt theo cấu hình baseline.
 
 Không sử dụng database sampling, map segmentation, radar, CBGS hoặc multi-sweep.
-PNXKCollect3D cấp tensor rỗng cho đối số ảnh/depth không dùng trong chế độ LiDAR,
+PNKXCollect3D cấp tensor rỗng cho đối số ảnh/depth không dùng trong chế độ LiDAR,
 để khớp chữ ký forward chung của repo. Trong fusion, point cache ở ego nên
 `lidar2ego=I`, `camera2lidar=camera2ego`, `lidar2camera=ego2camera`.
 
 Lệnh chạy sau khi môi trường GPU sẵn sàng:
 
 ```bash
-torchpack dist-run -np 1 python tools/train.py configs/pnxk/lidar.yaml \
-  --run-dir runs/pnxk-lidar-debug
+torchpack dist-run -np 1 python tools/train.py configs/pnkx/lidar.yaml \
+  --run-dir runs/pnkx-lidar-debug
 
-torchpack dist-run -np 1 python tools/train.py configs/pnxk/fusion.yaml \
-  --run-dir runs/pnxk-fusion-debug
+torchpack dist-run -np 1 python tools/train.py configs/pnkx/fusion.yaml \
+  --run-dir runs/pnkx-fusion-debug
 ```
 
 Trên máy RTX 5060 hiện tại, dùng chế độ một GPU trực tiếp để tránh bước
 khởi tạo MPI/NCCL đang bị kẹt:
 
 ```bash
-bash tools/pnxk_docker.sh prepare
-bash tools/pnxk_docker.sh check
-bash tools/pnxk_docker.sh train
+bash tools/pnkx_docker.sh prepare
+bash tools/pnkx_docker.sh check-debug
+bash tools/pnkx_docker.sh train-debug
 ```
 
 Wrapper chạy `tools/train.py --launcher none`. Launcher MPI mặc định của repo

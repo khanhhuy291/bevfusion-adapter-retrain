@@ -1,0 +1,8 @@
+# Batch 1 x accumulation 4; BatchNorm still sees batch 1.
+use_camera: false
+camera_checkpointing: true
+data:
+  samples_per_gpu: 1
+  workers_per_gpu: 0
+optimizer_config:
+  cumulative_iters: 4

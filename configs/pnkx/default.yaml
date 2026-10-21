@@ -1,4 +1,4 @@
-# PNXK debug baseline: single sweep, no velocity, no database sampling.
+# PNKX debug baseline: single sweep, no velocity, no database sampling.
 # Point frame is ego. Augmentation is disabled for the initial overfit check.
 seed: 0
 deterministic: false
@@ -73,7 +73,7 @@ model:
       bn_momentum: 0.1
       activation: relu
       train_cfg:
-        dataset: PNXK
+        dataset: PNKX
         point_cloud_range: ${point_cloud_range}
         grid_size:
         - 1024
@@ -110,7 +110,7 @@ model:
             type: IoU3DCost
             weight: 0.25
       test_cfg:
-        dataset: PNXK
+        dataset: PNKX
         grid_size:
         - 1024
         - 1024
@@ -224,7 +224,7 @@ lr_config:
   policy: CosineAnnealing
   min_lr_ratio: 0.001
 momentum_config: null
-dataset_root: data/pnxk/
+dataset_root: data/pnkx/
 object_classes:
 - car
 - rider
@@ -266,7 +266,7 @@ lidar_test_pipeline:
   point_cloud_range: ${point_cloud_range}
 - type: DefaultFormatBundle3D
   classes: ${object_classes}
-- type: PNXKCollect3D
+- type: PNKXCollect3D
   keys:
   - points
   - gt_bboxes_3d
@@ -307,7 +307,7 @@ lidar_train_pipeline:
 - type: PointShuffle
 - type: DefaultFormatBundle3D
   classes: ${object_classes}
-- type: PNXKCollect3D
+- type: PNKXCollect3D
   keys:
   - points
   - gt_bboxes_3d
@@ -358,7 +358,7 @@ fusion_test_pipeline:
   - 0.225
 - type: DefaultFormatBundle3D
   classes: ${object_classes}
-- type: PNXKCollect3D
+- type: PNKXCollect3D
   keys:
   - img
   - points
@@ -415,7 +415,7 @@ fusion_train_pipeline:
   - 0.225
 - type: DefaultFormatBundle3D
   classes: ${object_classes}
-- type: PNXKCollect3D
+- type: PNKXCollect3D
   keys:
   - img
   - points
@@ -428,9 +428,9 @@ data:
   samples_per_gpu: 1
   workers_per_gpu: 0
   train:
-    type: PNXKDataset
+    type: PNKXDataset
     dataset_root: ${dataset_root}
-    ann_file: ${dataset_root + "pnxk_infos_train.pkl"}
+    ann_file: ${dataset_root + "pnkx_infos_train.pkl"}
     classes: ${object_classes}
     point_cloud_range: ${point_cloud_range}
     modality:
@@ -441,9 +441,9 @@ data:
     test_mode: false
     filter_empty_gt: true
   val:
-    type: PNXKDataset
+    type: PNKXDataset
     dataset_root: ${dataset_root}
-    ann_file: ${dataset_root + "pnxk_infos_val.pkl"}
+    ann_file: ${dataset_root + "pnkx_infos_val.pkl"}
     classes: ${object_classes}
     point_cloud_range: ${point_cloud_range}
     modality:
@@ -454,9 +454,9 @@ data:
     test_mode: true
     filter_empty_gt: false
   test:
-    type: PNXKDataset
+    type: PNKXDataset
     dataset_root: ${dataset_root}
-    ann_file: ${dataset_root + "pnxk_infos_val.pkl"}
+    ann_file: ${dataset_root + "pnkx_infos_val.pkl"}
     classes: ${object_classes}
     point_cloud_range: ${point_cloud_range}
     modality:

@@ -1,4 +1,17 @@
-# Hướng dẫn train fusion PNXK từ raw đến checkpoint
+# Hướng dẫn train fusion PNKX từ raw đến checkpoint
+
+> **Cập nhật profile nuScenes:** Các thông số/kết quả bên dưới mô tả bản debug
+> BEV 128 cũ. Xem [profile mới và cách chạy](pnkx-nuscenes-profile.md) cho BEV 180,
+> FP16, CBGS, augmentation và lịch train theo nuScenes. Đã sửa thêm quy ước
+> LWH/yaw → WLH/yaw legacy ở dataset; checkpoint debug cũ cần train lại.
+> Các lệnh wrapper có hậu tố `-debug` dưới đây dùng config debug hiện hành.
+
+
+Tên chuẩn hiện tại là **PNKX**. Các kết quả train/verify ngày 19/10/2026 bên dưới
+là lịch sử của mẫu VF6_01. Converter hiện đã map camera sau VF6_03 từ
+`CAM_P_B_New`, dùng calibration cùng tên; xem profile mới bên dưới.
+Xem [đối chiếu PNKX/nuScenes và trạng thái split mới](pnkx-vs-nuscenes.md).
+Các link `runs/pnxk-*`, `outputs/pnxk-*` được giữ để trỏ đúng artifact lịch sử.
 
 Hướng dẫn này dành cho workspace hiện tại trên máy RTX 5060 Laptop 8 GB,
 dùng image Docker **`bevfusion:rtx5060` đã có sẵn**. Quy trình đã chạy qua với
@@ -23,7 +36,7 @@ của host để chạy model và không cài đè dependency train lên base.
 
 Docker phải truy cập được GPU. Image trên là điều kiện có sẵn của hướng dẫn;
 script không tự tải hoặc build lại image. Thông tin đầy đủ tại
-[pnxk-environment.md](pnxk-environment.md).
+[pnkx-environment.md](pnkx-environment.md).
 
 Trong phiên Codex, kiểm tra GPU/Docker cần quyền ngoài sandbox. Nếu NVIDIA-SMI
 báo lỗi trong sandbox, kiểm tra lại trong terminal của máy trước khi kết luận driver hỏng.
@@ -31,7 +44,7 @@ báo lỗi trong sandbox, kiểm tra lại trong terminal của máy trước kh
 ## 2. Chuẩn bị raw và label
 
 ```text
-Data-PNXK/
+Data-PNKX/
 ├── data/
 │   └── <recording>/
 │       ├── <chunk-1>/
@@ -74,11 +87,11 @@ Quy ước đã chốt:
 - Ảnh raw chưa undistort. Converter sẽ xử lý méo, không cần sửa ảnh gốc.
 
 Chiều extrinsics camera không được suy rộng cho xe/ngày khác nếu chưa kiểm chứng.
-Xem [quy trình kiểm chứng hình học](pnxk-data-verification.md).
+Xem [quy trình kiểm chứng hình học](pnkx-data-verification.md).
 
 ## 3. Chuẩn bị split theo recording
 
-Mỗi dòng trong `Data-PNXK/split/train.txt` hoặc `val.txt` là một recording:
+Mỗi dòng trong `Data-PNKX/split/train.txt` hoặc `val.txt` là một recording:
 
 ```text
 20260228_1105_VF6_01_1772251511_1772254880
@@ -99,17 +112,17 @@ khi convert. Với train thật, tách recording giữa hai split và bỏ tùy 
 ## 4. Chuẩn bị thư viện convert trên host
 
 Tiền xử lý không cần GPU. Trong máy hiện tại, Python host đã có NumPy và Pillow;
-các thư viện bổ sung từng được cài vào `/tmp/pnxk-inspect-deps`:
+các thư viện bổ sung từng được cài vào `/tmp/pnkx-inspect-deps`:
 
 ```bash
 python -c "import numpy; from PIL import Image; print('NumPy/Pillow OK')"
-PYTHONPATH=/tmp/pnxk-inspect-deps python -c "import laspy, lazrs, cv2; print('LAZ/OpenCV OK')"
+PYTHONPATH=/tmp/pnkx-inspect-deps python -c "import laspy, lazrs, cv2; print('LAZ/OpenCV OK')"
 ```
 
 Nếu thư mục tạm đã bị dọn, cài lại các phiên bản đã dùng:
 
 ```bash
-python -m pip install --target /tmp/pnxk-inspect-deps --no-deps \
+python -m pip install --target /tmp/pnkx-inspect-deps --no-deps \
   laspy==2.7.0 lazrs==0.8.2 opencv-python-headless==5.0.0.93
 ```
 
@@ -119,11 +132,11 @@ cần chuẩn bị Python tiền xử lý có đủ NumPy, Pillow và các thư 
 ## 5. Convert raw thành cache fusion
 
 ```bash
-PYTHONPATH=/tmp/pnxk-inspect-deps python tools/data_converter/pnxk_converter.py \
-  --root Data-PNXK \
-  --train-split Data-PNXK/split/train.txt \
-  --val-split Data-PNXK/split/val.txt \
-  --output data/pnxk \
+PYTHONPATH=/tmp/pnkx-inspect-deps python tools/data_converter/pnkx_converter.py \
+  --root Data-PNKX \
+  --train-split Data-PNKX/split/train.txt \
+  --val-split Data-PNKX/split/val.txt \
+  --output data/pnkx \
   --allow-split-overlap \
   --with-cameras \
   --camera-extrinsics ego-to-camera \
@@ -151,9 +164,9 @@ val: 171 samples, 0 skipped frames, 0 skipped chunks
 ```
 
 ```text
-data/pnxk/
-├── pnxk_infos_train.pkl
-├── pnxk_infos_val.pkl
+data/pnkx/
+├── pnkx_infos_train.pkl
+├── pnkx_infos_val.pkl
 ├── conversion_report.json
 ├── points/<recording>/<chunk>/*.bin
 └── images/<recording>/<chunk>/<camera>/*.jpg
@@ -165,12 +178,12 @@ khi chạy lại. Khi raw/split/calibration thay đổi, cần convert lại tr�
 ## 6. Chuẩn bị extension CUDA và kiểm tra batch
 
 ```bash
-bash tools/pnxk_docker.sh prepare
-bash tools/pnxk_docker.sh check-fusion
+bash tools/pnkx_docker.sh prepare
+bash tools/pnkx_docker.sh check-fusion-debug
 ```
 
 `prepare` lấy 13 extension CUDA build sẵn trong image cho đúng Python/Torch ABI.
-`check-fusion` mount source hiện tại vào container, đọc cache và kiểm tra logic
+`check-fusion-debug` mount source hiện tại vào container, đọc cache và kiểm tra logic
 dataset/pipeline thật. Không train code cũ đóng sẵn trong image.
 
 Kết quả mong đợi trên mẫu:
@@ -187,7 +200,7 @@ Số điểm sẽ khác nếu dùng dữ liệu khác.
 ## 7. Kiểm tra một forward/backward fusion thật
 
 ```bash
-bash tools/pnxk_docker.sh audit-fusion
+bash tools/pnkx_docker.sh audit-fusion-debug
 ```
 
 Audit dùng GPU thật, không mock network. Kết quả cần có:
@@ -199,21 +212,21 @@ Audit dùng GPU thật, không mock network. Kết quả cần có:
 - Camera, LiDAR và fuser đều có gradient hữu hạn, `absolute_sum > 0`.
 - `points_unchanged: true`.
 
-Báo cáo lưu tại `outputs/pnxk-fusion-audit.json`. Chạy audit xong rồi mới train,
+Báo cáo lưu tại `outputs/pnkx-fusion-audit.json`. Chạy audit xong rồi mới train,
 không chạy đồng thời hai tiến trình GPU trên máy 8 GB.
 
 ## 8. Train fusion một epoch
 
 ```bash
-bash tools/pnxk_docker.sh train-fusion
+bash tools/pnkx_docker.sh train-fusion-debug
 ```
 
 Lệnh này tương đương chạy trong container:
 
 ```bash
-python tools/train.py configs/pnxk/fusion.yaml \
+python tools/train.py configs/pnkx/fusion.yaml \
   --launcher none \
-  --run-dir runs/pnxk-fusion-single-gpu \
+  --run-dir runs/pnkx-fusion-single-gpu \
   --max_epochs 1
 ```
 
@@ -231,8 +244,8 @@ Cấu hình hiện tại:
 Muốn dùng run-dir khác để giữ nguyên kết quả cũ:
 
 ```bash
-bash tools/pnxk_docker.sh train-fusion \
-  --run-dir runs/pnxk-fusion-test-02 --max_epochs 1
+bash tools/pnkx_docker.sh train-fusion-debug \
+  --run-dir runs/pnkx-fusion-test-02 --max_epochs 1
 ```
 
 Muốn chạy nhiều epoch từ khởi tạo mới, đổi `--max_epochs`. Tăng số epoch không
@@ -248,15 +261,15 @@ Một lần chạy thành công cần đủ các dấu hiệu sau:
 4. Tiến trình kết thúc thành công, có checkpoint và config đã resolve.
 
 ```bash
-ls -lh runs/pnxk-fusion-single-gpu/epoch_1.pth
-ls -l runs/pnxk-fusion-single-gpu/latest.pth
-ls runs/pnxk-fusion-single-gpu/*.log
+ls -lh runs/pnkx-fusion-single-gpu/epoch_1.pth
+ls -l runs/pnkx-fusion-single-gpu/latest.pth
+ls runs/pnkx-fusion-single-gpu/*.log
 ```
 
 Các file đầu ra:
 
 ```text
-runs/pnxk-fusion-single-gpu/
+runs/pnkx-fusion-single-gpu/
 ├── configs.yaml
 ├── <timestamp>.log
 ├── <timestamp>.log.json
@@ -300,24 +313,24 @@ Sau khi đã có image và thư viện convert:
 ```bash
 cd /home/khanhhuy/bevfusion-adapter-retrain
 
-PYTHONPATH=/tmp/pnxk-inspect-deps python tools/data_converter/pnxk_converter.py \
-  --root Data-PNXK \
-  --train-split Data-PNXK/split/train.txt \
-  --val-split Data-PNXK/split/val.txt \
-  --output data/pnxk \
+PYTHONPATH=/tmp/pnkx-inspect-deps python tools/data_converter/pnkx_converter.py \
+  --root Data-PNKX \
+  --train-split Data-PNKX/split/train.txt \
+  --val-split Data-PNKX/split/val.txt \
+  --output data/pnkx \
   --allow-split-overlap \
   --with-cameras \
   --camera-extrinsics ego-to-camera \
   --distortion-model opencv-standard
 
-bash tools/pnxk_docker.sh prepare
-bash tools/pnxk_docker.sh check-fusion
-bash tools/pnxk_docker.sh audit-fusion
-bash tools/pnxk_docker.sh train-fusion --run-dir runs/pnxk-fusion-raw-test
+bash tools/pnkx_docker.sh prepare
+bash tools/pnkx_docker.sh check-fusion-debug
+bash tools/pnkx_docker.sh audit-fusion-debug
+bash tools/pnkx_docker.sh train-fusion-debug --run-dir runs/pnkx-fusion-raw-test
 ```
 
 Mỗi lệnh cần thành công trước khi chạy lệnh tiếp theo. Với run-dir cuối ở ví dụ,
-checkpoint nằm trong `runs/pnxk-fusion-raw-test/`.
+checkpoint nằm trong `runs/pnkx-fusion-raw-test/`.
 
 Raw, cache, checkpoint và audit report được gitignore, không tự đi kèm source
 khi clone repo. Phạm vi đã xác minh là recording/chunk/calibration mẫu; dữ liệu

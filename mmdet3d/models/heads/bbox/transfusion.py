@@ -263,8 +263,8 @@ class TransFusionHead(nn.Module):
                 :,
                 2,
             ] = F.max_pool2d(heatmap[:, 2], kernel_size=1, stride=1, padding=0)
-        elif self.test_cfg["dataset"] == "PNXK":
-            # PNXK order: car, rider, pedestrian. Preserve small-object peaks.
+        elif self.test_cfg["dataset"] == "PNKX":
+            # PNKX order: car, rider, pedestrian. Preserve small-object peaks.
             for class_id in (1, 2):
                 local_max[:, class_id] = heatmap[:, class_id]
         heatmap = heatmap * (heatmap == local_max)
@@ -781,7 +781,7 @@ class TransFusionHead(nn.Module):
                     ),
                     dict(num_class=1, class_names=["Cyclist"], indices=[2], radius=0.7),
                 ]
-            elif self.test_cfg["dataset"] == "PNXK":
+            elif self.test_cfg["dataset"] == "PNKX":
                 self.tasks = [dict(num_class=1, class_names=[], indices=[i], radius=0.2)
                               for i in range(self.num_classes)]
 

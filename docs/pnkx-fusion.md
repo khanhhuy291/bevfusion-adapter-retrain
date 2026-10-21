@@ -1,9 +1,22 @@
 # Kiểm chứng luồng fusion 6 camera + LiDAR
 
+> **Cập nhật profile nuScenes:** Các thông số/kết quả bên dưới mô tả bản debug
+> BEV 128 cũ. Xem [profile mới và cách chạy](pnkx-nuscenes-profile.md) cho BEV 180,
+> FP16, CBGS, augmentation và lịch train theo nuScenes. Đã sửa thêm quy ước
+> LWH/yaw → WLH/yaw legacy ở dataset; checkpoint debug cũ cần train lại.
+> Các lệnh wrapper có hậu tố `-debug` dưới đây dùng config debug hiện hành.
+
+
+Tên chuẩn hiện tại là **PNKX**. Các kết quả train/verify ngày 19/10/2026 bên dưới
+là lịch sử của mẫu VF6_01. Converter hiện đã map camera sau VF6_03 từ
+`CAM_P_B_New`, dùng calibration cùng tên; xem profile mới bên dưới.
+Xem [đối chiếu PNKX/nuScenes và trạng thái split mới](pnkx-vs-nuscenes.md).
+Các link `runs/pnxk-*`, `outputs/pnxk-*` được giữ để trỏ đúng artifact lịch sử.
+
 ## Kết quả ngày 19/10/2026
 
 Đã hoàn thành một epoch gồm **171 iteration train và 171 frame validation** trên
-RTX 5060 Laptop 8 GB, dùng image `bevfusion:rtx5060` và source PNXK hiện tại.
+RTX 5060 Laptop 8 GB, dùng image `bevfusion:rtx5060` và source PNKX hiện tại.
 Mục tiêu là kiểm chứng luồng và logic dữ liệu; chưa đánh giá chất lượng detection.
 
 | Thiết lập | Giá trị |
@@ -27,31 +40,31 @@ theo chủ đích debug. Metric vẫn là center-distance diagnostic, không ph�
 
 ## Cách chạy lại
 
-Cache fusion `data/pnxk` đã có đủ ảnh undistort và metadata. Từ workspace:
+Cache fusion `data/pnkx` đã có đủ ảnh undistort và metadata. Từ workspace:
 
 ```bash
-bash tools/pnxk_docker.sh prepare
-bash tools/pnxk_docker.sh check-fusion
-bash tools/pnxk_docker.sh audit-fusion
-bash tools/pnxk_docker.sh train-fusion
+bash tools/pnkx_docker.sh prepare
+bash tools/pnkx_docker.sh check-fusion-debug
+bash tools/pnkx_docker.sh audit-fusion-debug
+bash tools/pnkx_docker.sh train-fusion-debug
 ```
 
-`train-fusion` chạy mặc định 1 epoch với `configs/pnxk/fusion.yaml`, launcher none
+`train-fusion-debug` chạy mặc định 1 epoch với `configs/pnkx/fusion.yaml`, launcher none
 và run-dir riêng. Có thể chọn run mới hoặc số epoch qua tham số bổ sung:
 
 ```bash
-bash tools/pnxk_docker.sh train-fusion \
-  --run-dir runs/pnxk-fusion-next --max_epochs 2
+bash tools/pnkx_docker.sh train-fusion-debug \
+  --run-dir runs/pnkx-fusion-next --max_epochs 2
 ```
 
 Không chạy audit GPU đồng thời với train trên GPU 8 GB. Các lệnh check/train
-LiDAR-only cũ vẫn dùng `check` / `train`.
+LiDAR-only cũ vẫn dùng `check-debug` / `train-debug`.
 
 ## Những logic đã kiểm tra
 
 ### Dữ liệu và hình học
 
-`tools/check_pnxk.py` kiểm tra trên batch thật của cả train và val:
+`tools/check_pnkx.py` kiểm tra trên batch thật của cả train và val:
 
 - Đúng thứ tự sáu camera, đủ sáu ảnh; shape từng ma trận là `[6, 4, 4]`.
 - Tâm hình học trong label khớp gravity_center của box framework.
@@ -63,11 +76,11 @@ LiDAR-only cũ vẫn dùng `check` / `train`.
 
 Chiều camera extrinsics áp dụng theo kết quả kiểm chứng mẫu: JSON camera là
 ego → camera; JSON TOP là sensor → ego. Không transform point cache sang ego lần nữa.
-Chi tiết calibration tại [pnxk-data-verification.md](pnxk-data-verification.md).
+Chi tiết calibration tại [pnkx-data-verification.md](pnkx-data-verification.md).
 
 ### Forward/backward GPU thật
 
-`tools/check_pnxk_fusion.py` chạy một batch với model và CUDA pooling thật,
+`tools/check_pnkx_fusion.py` chạy một batch với model và CUDA pooling thật,
 không mock network. Kết quả độc lập lưu trong
 [`outputs/pnxk-fusion-audit.json`](../outputs/pnxk-fusion-audit.json):
 

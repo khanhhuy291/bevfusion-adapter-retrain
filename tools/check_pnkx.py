@@ -1,4 +1,4 @@
-"""Validate a converted PNXK cache on CPU; optionally build a real pipeline batch."""
+"""Validate a converted PNKX cache on CPU; optionally build a real pipeline batch."""
 import argparse
 import json
 import pickle
@@ -13,7 +13,7 @@ def check_cache(root):
 
     report = {}
     for split in ('train', 'val'):
-        with (root / ('pnxk_infos_' + split + '.pkl')).open('rb') as handle:
+        with (root / ('pnkx_infos_' + split + '.pkl')).open('rb') as handle:
             data = pickle.load(handle)
         assert data['metadata']['schema_version'] == 1
         assert data['metadata']['point_frame'] == 'ego'
@@ -33,6 +33,10 @@ def check_cache(root):
             assert set(info['gt_names']) <= set(data['metadata']['classes'])
             assert [c['name'] for c in info['cams']] == data['metadata']['cameras']
             for camera in info['cams']:
+                sources = data['metadata'].get('camera_sources', {}).get(info['recording'])
+                if sources is not None:
+                    assert camera['source_name'] == sources[camera['name']]
+                    assert Path(camera['source_path']).parent.name == camera['source_name']
                 t = np.asarray(camera['ego2camera'])
                 assert np.allclose(t @ np.linalg.inv(t), np.eye(4), atol=1e-5)
                 assert np.asarray(camera['intrinsic']).shape == (3, 3)
@@ -40,7 +44,8 @@ def check_cache(root):
                     image.verify()
         report[split] = dict(samples=len(tokens), recordings=len(data['metadata']['recordings']),
                              cameras=len(data['metadata']['cameras']),
-                             split_overlap=data['metadata']['split_overlap'])
+                             split_overlap=data['metadata']['split_overlap'],
+                             camera_sources=data['metadata'].get('camera_sources', {}))
     print(json.dumps(report, indent=2))
 
 
@@ -57,15 +62,17 @@ def check_pipeline(config_path, root):
     cfg = Config(recursive_eval(configs))
     for split in ('train', 'val'):
         dataset = build_dataset(cfg.data[split])
-        raw = dataset.get_data_info(0)
-        expected_centers = dataset.data_infos[0]['gt_boxes'][:, :3]
+        base_dataset = dataset.dataset if hasattr(dataset, 'sample_indices') else dataset
+        index = dataset.sample_indices[0] if hasattr(dataset, 'sample_indices') else 0
+        raw = base_dataset.get_data_info(index)
+        expected_centers = base_dataset.data_infos[index]['gt_boxes'][:, :3]
         np.testing.assert_allclose(raw['ann_info']['gt_bboxes_3d'].gravity_center.numpy(),
                                    expected_centers, atol=1e-5)
         np.testing.assert_allclose(raw['lidar2ego'], np.eye(4), atol=1e-6)
         if cfg.use_camera:
             expected_cameras = ['CAM_P_F', 'CAM_P_FL', 'CAM_P_FR',
                                 'CAM_P_B', 'CAM_P_LB', 'CAM_P_RB']
-            assert dataset.metadata['cameras'] == expected_cameras
+            assert base_dataset.metadata['cameras'] == expected_cameras
             assert len(raw['image_paths']) == 6
             for i in range(6):
                 np.testing.assert_allclose(raw['camera2lidar'][i] @ raw['lidar2camera'][i],
@@ -100,7 +107,7 @@ def check_pipeline(config_path, root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--root', default='data/pnxk')
+    parser.add_argument('--root', default='data/pnkx')
     parser.add_argument('--pipeline-config', help='Requires the original mmcv/mmdet training environment')
     args = parser.parse_args()
     root = Path(args.root).resolve()

@@ -1,0 +1,2 @@
+# Reference batch/precision/grid; not claimed to fit every GPU.
+use_camera: true

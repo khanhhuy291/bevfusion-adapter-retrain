@@ -1,0 +1,376 @@
+# PNKX v0p075 recipe. Inherits PNKX data/head adaptations, retains single sweep.
+# Local pretrained paths are required for fusion; see docs/pnkx-nuscenes-profile.md.
+use_camera: true
+point_cloud_range:
+- -54.0
+- -54.0
+- -5.0
+- 54.0
+- 54.0
+- 3.0
+voxel_size:
+- 0.075
+- 0.075
+- 0.2
+camera_checkpointing: false
+camera_pretrained: pretrained/swint-nuimages-pretrained.pth
+lidar_pretrained: pretrained/lidar-only-det.pth
+load_from: ${lidar_pretrained if use_camera else None}
+max_epochs: ${6 if use_camera else 20}
+camera_encoder:
+  neck:
+    type: GeneralizedLSSFPN
+    in_channels:
+    - 192
+    - 384
+    - 768
+    out_channels: 256
+    start_level: 0
+    num_outs: 3
+    norm_cfg:
+      type: BN2d
+      requires_grad: true
+    act_cfg:
+      type: ReLU
+      inplace: true
+    upsample_cfg:
+      mode: bilinear
+      align_corners: false
+  vtransform:
+    type: DepthLSSTransform
+    in_channels: 256
+    out_channels: 80
+    image_size: ${image_size}
+    feature_size: ${[image_size[0] // 8, image_size[1] // 8]}
+    xbound:
+    - -54.0
+    - 54.0
+    - 0.3
+    ybound:
+    - -54.0
+    - 54.0
+    - 0.3
+    zbound:
+    - -10.0
+    - 10.0
+    - 20.0
+    dbound:
+    - 1.0
+    - 60.0
+    - 0.5
+    downsample: 2
+  backbone:
+    type: SwinTransformer
+    embed_dims: 96
+    depths:
+    - 2
+    - 2
+    - 6
+    - 2
+    num_heads:
+    - 3
+    - 6
+    - 12
+    - 24
+    window_size: 7
+    mlp_ratio: 4
+    qkv_bias: true
+    qk_scale: null
+    drop_rate: 0.0
+    attn_drop_rate: 0.0
+    drop_path_rate: 0.2
+    patch_norm: true
+    out_indices:
+    - 1
+    - 2
+    - 3
+    with_cp: ${camera_checkpointing}
+    convert_weights: true
+    init_cfg: ${dict(type='Pretrained', checkpoint=camera_pretrained) if camera_pretrained
+      else None}
+fusion_fuser:
+  type: ConvFuser
+  in_channels:
+  - 80
+  - 256
+  out_channels: 256
+model:
+  encoders:
+    camera: ${camera_encoder if use_camera else None}
+    lidar:
+      voxelize:
+        max_voxels:
+        - 120000
+        - 160000
+      backbone:
+        sparse_shape:
+        - 1440
+        - 1440
+        - 41
+  fuser: ${fusion_fuser if use_camera else None}
+  heads:
+    map: null
+    object:
+      train_cfg:
+        grid_size:
+        - 1440
+        - 1440
+        - 41
+      test_cfg:
+        grid_size:
+        - 1440
+        - 1440
+        - 41
+fp16:
+  loss_scale:
+    growth_interval: 2000
+log_config:
+  interval: 50
+  hooks:
+  - type: TextLoggerHook
+  - type: TensorboardLoggerHook
+optimizer:
+  lr: ${2.0e-4 if use_camera else 1.0e-4}
+fusion_lr_config:
+  policy: CosineAnnealing
+  warmup: linear
+  warmup_iters: 500
+  warmup_ratio: 0.33333333
+  min_lr_ratio: 0.001
+lidar_lr_config:
+  policy: cyclic
+lr_config: ${fusion_lr_config if use_camera else lidar_lr_config}
+momentum_config: ${None if use_camera else dict(policy='cyclic')}
+lidar_train_pipeline:
+- type: LoadPointsFromFile
+  coord_type: LIDAR
+  load_dim: 5
+  use_dim: 5
+  reduce_beams: null
+- type: LoadAnnotations3D
+  with_bbox_3d: true
+  with_label_3d: true
+- type: GlobalRotScaleTrans
+  resize_lim:
+  - 0.9
+  - 1.1
+  rot_lim:
+  - -0.78539816
+  - 0.78539816
+  trans_lim: 0.5
+  is_train: true
+- type: RandomFlip3D
+- type: PointsRangeFilter
+  point_cloud_range: ${point_cloud_range}
+- type: ObjectRangeFilter
+  point_cloud_range: ${point_cloud_range}
+- type: ObjectNameFilter
+  classes: ${object_classes}
+- type: PointShuffle
+- type: DefaultFormatBundle3D
+  classes: ${object_classes}
+- type: PNKXCollect3D
+  keys:
+  - points
+  - gt_bboxes_3d
+  - gt_labels_3d
+  meta_keys:
+  - camera_intrinsics
+  - camera2ego
+  - lidar2ego
+  - lidar2camera
+  - lidar2image
+  - camera2lidar
+  - img_aug_matrix
+  - lidar_aug_matrix
+lidar_test_pipeline:
+- type: LoadPointsFromFile
+  coord_type: LIDAR
+  load_dim: 5
+  use_dim: 5
+  reduce_beams: null
+- type: LoadAnnotations3D
+  with_bbox_3d: true
+  with_label_3d: true
+- type: GlobalRotScaleTrans
+  resize_lim:
+  - 1.0
+  - 1.0
+  rot_lim:
+  - 0.0
+  - 0.0
+  trans_lim: 0.0
+  is_train: false
+- type: PointsRangeFilter
+  point_cloud_range: ${point_cloud_range}
+- type: DefaultFormatBundle3D
+  classes: ${object_classes}
+- type: PNKXCollect3D
+  keys:
+  - points
+  - gt_bboxes_3d
+  - gt_labels_3d
+  meta_keys:
+  - camera_intrinsics
+  - camera2ego
+  - lidar2ego
+  - lidar2camera
+  - lidar2image
+  - camera2lidar
+  - img_aug_matrix
+  - lidar_aug_matrix
+fusion_train_pipeline:
+- type: LoadMultiViewImageFromFiles
+- type: LoadPointsFromFile
+  coord_type: LIDAR
+  load_dim: 5
+  use_dim: 5
+  reduce_beams: null
+- type: LoadAnnotations3D
+  with_bbox_3d: true
+  with_label_3d: true
+- type: ImageAug3D
+  final_dim: ${image_size}
+  resize_lim:
+  - 0.38
+  - 0.55
+  bot_pct_lim:
+  - 0.0
+  - 0.0
+  rot_lim:
+  - -5.4
+  - 5.4
+  rand_flip: true
+  is_train: true
+- type: GlobalRotScaleTrans
+  resize_lim:
+  - 0.9
+  - 1.1
+  rot_lim:
+  - -0.78539816
+  - 0.78539816
+  trans_lim: 0.5
+  is_train: true
+- type: RandomFlip3D
+- type: PointsRangeFilter
+  point_cloud_range: ${point_cloud_range}
+- type: ObjectRangeFilter
+  point_cloud_range: ${point_cloud_range}
+- type: ObjectNameFilter
+  classes: ${object_classes}
+- type: GridMask
+  use_h: true
+  use_w: true
+  max_epoch: ${max_epochs}
+  rotate: 1
+  offset: false
+  ratio: 0.5
+  mode: 1
+  prob: 0.0
+  fixed_prob: true
+- type: PointShuffle
+- type: ImageNormalize
+  mean:
+  - 0.485
+  - 0.456
+  - 0.406
+  std:
+  - 0.229
+  - 0.224
+  - 0.225
+- type: DefaultFormatBundle3D
+  classes: ${object_classes}
+- type: PNKXCollect3D
+  keys:
+  - img
+  - points
+  - gt_bboxes_3d
+  - gt_labels_3d
+  meta_keys:
+  - camera_intrinsics
+  - camera2ego
+  - lidar2ego
+  - lidar2camera
+  - lidar2image
+  - camera2lidar
+  - img_aug_matrix
+  - lidar_aug_matrix
+fusion_test_pipeline:
+- type: LoadMultiViewImageFromFiles
+- type: LoadPointsFromFile
+  coord_type: LIDAR
+  load_dim: 5
+  use_dim: 5
+  reduce_beams: null
+- type: LoadAnnotations3D
+  with_bbox_3d: true
+  with_label_3d: true
+- type: ImageAug3D
+  final_dim: ${image_size}
+  resize_lim:
+  - 0.48
+  - 0.48
+  bot_pct_lim:
+  - 0.0
+  - 0.0
+  rot_lim:
+  - 0.0
+  - 0.0
+  rand_flip: false
+  is_train: false
+- type: GlobalRotScaleTrans
+  resize_lim:
+  - 1.0
+  - 1.0
+  rot_lim:
+  - 0.0
+  - 0.0
+  trans_lim: 0.0
+  is_train: false
+- type: PointsRangeFilter
+  point_cloud_range: ${point_cloud_range}
+- type: ImageNormalize
+  mean:
+  - 0.485
+  - 0.456
+  - 0.406
+  std:
+  - 0.229
+  - 0.224
+  - 0.225
+- type: DefaultFormatBundle3D
+  classes: ${object_classes}
+- type: PNKXCollect3D
+  keys:
+  - img
+  - points
+  - gt_bboxes_3d
+  - gt_labels_3d
+  meta_keys:
+  - camera_intrinsics
+  - camera2ego
+  - lidar2ego
+  - lidar2camera
+  - lidar2image
+  - camera2lidar
+  - img_aug_matrix
+  - lidar_aug_matrix
+pnkx_training_dataset:
+  type: CBGSDataset
+  dataset:
+    type: PNKXDataset
+    dataset_root: ${dataset_root}
+    ann_file: ${dataset_root + "pnkx_infos_train.pkl"}
+    classes: ${object_classes}
+    point_cloud_range: ${point_cloud_range}
+    modality:
+      use_camera: ${use_camera}
+      use_lidar: true
+    pipeline: ${train_pipeline}
+    box_type_3d: LiDAR
+    test_mode: false
+    filter_empty_gt: true
+data:
+  samples_per_gpu: 4
+  workers_per_gpu: 4
+  train: ${pnkx_training_dataset}

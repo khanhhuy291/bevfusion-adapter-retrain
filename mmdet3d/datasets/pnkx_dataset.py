@@ -1,4 +1,4 @@
-"""PNXK single-sweep dataset. All cached points and boxes use ego axes."""
+"""PNKX single-sweep dataset. All cached points and boxes use ego axes."""
 from pathlib import Path
 
 import mmcv
@@ -11,11 +11,12 @@ from mmdet.datasets.builder import PIPELINES
 from mmdet3d.core.bbox import LiDARInstance3DBoxes
 from .custom_3d import Custom3DDataset
 from .pipelines.formating import Collect3D
-from .pnxk_metrics import center_distance_ap
+from .pnkx_metrics import center_distance_ap
+from .pnkx_geometry import raw_boxes_to_internal
 
 
 @DATASETS.register_module()
-class PNXKDataset(Custom3DDataset):
+class PNKXDataset(Custom3DDataset):
     CLASSES = ('car', 'rider', 'pedestrian')
 
     def __init__(self, point_cloud_range=None, **kwargs):
@@ -26,9 +27,9 @@ class PNXKDataset(Custom3DDataset):
         data = mmcv.load(ann_file)
         self.metadata = data['metadata']
         if self.metadata.get('schema_version') != 1 or self.metadata.get('point_frame') != 'ego':
-            raise ValueError('Unsupported PNXK cache schema or point frame')
+            raise ValueError('Unsupported PNKX cache schema or point frame')
         if tuple(self.metadata['classes']) != tuple(self.CLASSES):
-            raise ValueError('PNXK class order must match converter metadata')
+            raise ValueError('PNKX class order must match converter metadata')
         if self.modality.get('use_camera') and not self.metadata['cameras']:
             raise ValueError('Fusion requires a cache generated with --with-cameras')
         for info in data['infos']:
@@ -43,7 +44,7 @@ class PNXKDataset(Custom3DDataset):
         info = self.data_infos[index]
         names = info['gt_names'].copy()
         # Constructor converts geometric center to the framework's bottom center.
-        boxes = LiDARInstance3DBoxes(info['gt_boxes'].copy(), box_dim=7,
+        boxes = LiDARInstance3DBoxes(raw_boxes_to_internal(info['gt_boxes']), box_dim=7,
                                     origin=(0.5, 0.5, 0.5)).convert_to(self.box_mode_3d)
         return dict(gt_bboxes_3d=boxes,
                     gt_labels_3d=np.asarray([self.cat2id[n] for n in names], dtype=np.int64),
@@ -83,7 +84,7 @@ class PNXKDataset(Custom3DDataset):
         if isinstance(metric, (list, tuple)) and len(metric) == 1:
             metric = metric[0]
         if metric != 'center_distance':
-            raise ValueError('PNXK supports diagnostic center_distance metric only')
+            raise ValueError('PNKX supports diagnostic center_distance metric only')
         if len(results) != len(self):
             raise ValueError('Prediction count differs from dataset length')
         ground_truth, predictions = [], []
@@ -107,7 +108,7 @@ class PNXKDataset(Custom3DDataset):
 
 
 @PIPELINES.register_module()
-class PNXKCollect3D(Collect3D):
+class PNKXCollect3D(Collect3D):
     """Fill unused camera/depth arguments without loading dummy sensor files."""
     def __call__(self, results):
         data = super().__call__(results)

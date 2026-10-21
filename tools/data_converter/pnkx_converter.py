@@ -1,4 +1,4 @@
-"""Convert recording-level PNXK splits without importing the training stack."""
+"""Convert recording-level PNKX splits without importing the training stack."""
 import argparse
 import bisect
 import datetime as dt
@@ -9,7 +9,16 @@ from pathlib import Path
 import numpy as np
 
 CAMERAS = ('CAM_P_F', 'CAM_P_FL', 'CAM_P_FR', 'CAM_P_B', 'CAM_P_LB', 'CAM_P_RB')
+# Logical model slots stay fixed; VF6_03's rear sensor has a different raw name.
+# This is an explicit vehicle setup, not a fallback between calibrations.
+CAMERA_SOURCES_BY_VEHICLE = {'VF6_03': {'CAM_P_B': 'CAM_P_B_New'}}
 CLASSES = ('car', 'rider', 'pedestrian')
+
+
+def camera_sources(recording, cameras=CAMERAS):
+    vehicle = '_'.join(recording.split('_')[2:4])
+    overrides = CAMERA_SOURCES_BY_VEHICLE.get(vehicle, {})
+    return {camera: overrides.get(camera, camera) for camera in cameras}
 
 
 def portable_metadata(value):
@@ -71,8 +80,12 @@ def calibration(root, recording, sensors):
                 matrix[:3, :3].T @ matrix[:3, :3], np.eye(3), atol=1e-4):
             raise ValueError('Invalid rigid transform for {}'.format(sensor))
     intrinsics = {}
-    if any(s in CAMERAS for s in sensors):
+    camera_sensors = [s for s in sensors if s.startswith('CAM_')]
+    if camera_sensors:
         intrinsics = json.loads((root / '{}_Intrinsics.json'.format(vehicle)).read_text())
+        for sensor in camera_sensors:
+            if sensor not in intrinsics:
+                raise ValueError('Missing intrinsics {} in {}'.format(sensor, recording))
     return extrinsics, intrinsics
 
 
@@ -131,12 +144,14 @@ def convert(args):
     output.mkdir(parents=True, exist_ok=True)
     report = dict(overlapping_recordings=overlap, debug_overlap=bool(overlap),
                   camera_extrinsics=args.camera_extrinsics,
-                  distortion_model=args.distortion_model, splits={})
+                  distortion_model=args.distortion_model, camera_sources={}, splits={})
     memo = {}
     for split, recordings in splits.items():
         infos, skipped, issues = [], [], []
         for recording in recordings:
-            ext, intr = calibration(root, recording, ('LIDAR_TOP',) + cameras)
+            sources = camera_sources(recording, cameras)
+            report['camera_sources'][recording] = sources
+            ext, intr = calibration(root, recording, ('LIDAR_TOP',) + tuple(sources.values()))
             for chunk in sorted((root / 'data' / recording).iterdir()):
                 if not chunk.is_dir():
                     continue
@@ -148,7 +163,7 @@ def convert(args):
                     issues.append(message)
                     continue
                 indexes = {'LIDAR_TOP': sensor_index(chunk / 'LIDAR' / 'LIDAR_TOP', '.laz')}
-                indexes.update({c: sensor_index(chunk / 'CAMERA' / c, '.jpg') for c in cameras})
+                indexes.update({c: sensor_index(chunk / 'CAMERA' / sources[c], '.jpg') for c in cameras})
                 labels = sorted(label_dir.glob('*.txt'), key=timestamp_ns)
                 if args.max_frames_per_chunk:
                     labels = labels[:args.max_frames_per_chunk]
@@ -180,7 +195,8 @@ def convert(args):
                     if cameras:
                         import cv2
                     for camera, (image_path, delta) in matches.items():
-                        params = intr[camera]
+                        source = sources[camera]
+                        params = intr[source]
                         k = np.asarray(params['camera_matrix'], dtype=np.float64)
                         distortion = np.asarray(params['distortion_coefficients'], dtype=np.float64)
                         image = cv2.imread(str(image_path))
@@ -193,10 +209,12 @@ def convert(args):
                         destination.parent.mkdir(parents=True, exist_ok=True)
                         if not cv2.imwrite(str(destination), image):
                             raise IOError('Cannot write {}'.format(destination))
-                        t = np.asarray(ext[camera], dtype=np.float32)
+                        t = np.asarray(ext[source], dtype=np.float32)
                         if args.camera_extrinsics == 'camera-to-ego':
                             t = np.linalg.inv(t)
-                        cams.append(dict(name=camera, data_path=str(destination.relative_to(output)),
+                        cams.append(dict(name=camera, source_name=source,
+                                         source_path=str(image_path.relative_to(root)),
+                                         data_path=str(destination.relative_to(output)),
                                          ego2camera=t, intrinsic=k.astype(np.float32), delta_ms=delta))
                     info = dict(token=token, recording=recording, chunk=chunk.name,
                                 timestamp=timestamp / 1e9, timestamp_ns=timestamp,
@@ -207,8 +225,9 @@ def convert(args):
             raise ValueError('No usable samples in {}'.format(split))
         metadata = dict(schema_version=1, classes=CLASSES, point_frame='ego',
                         box_origin='geometric_center', point_features=['x', 'y', 'z', 'intensity', 'sweep_dt'],
-                        recordings=recordings, split_overlap=overlap, cameras=list(cameras))
-        with (output / ('pnxk_infos_' + split + '.pkl')).open('wb') as handle:
+                        recordings=recordings, split_overlap=overlap, cameras=list(cameras),
+                        camera_sources={r: report['camera_sources'][r] for r in recordings})
+        with (output / ('pnkx_infos_' + split + '.pkl')).open('wb') as handle:
             pickle.dump(portable_metadata(dict(metadata=metadata, infos=infos)), handle, protocol=4)
         report['splits'][split] = dict(samples=len(infos), recordings=recordings,
                                       skipped_samples=skipped, skipped_chunks=issues)
@@ -219,10 +238,10 @@ def convert(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--root', default='Data-PNXK')
-    parser.add_argument('--output', default='data/pnxk')
-    parser.add_argument('--train-split', default='Data-PNXK/split/train.txt')
-    parser.add_argument('--val-split', default='Data-PNXK/split/val.txt')
+    parser.add_argument('--root', default='Data-PNKX')
+    parser.add_argument('--output', default='data/pnkx')
+    parser.add_argument('--train-split', default='Data-PNKX/split/train.txt')
+    parser.add_argument('--val-split', default='Data-PNKX/split/val.txt')
     parser.add_argument('--allow-split-overlap', action='store_true')
     parser.add_argument('--with-cameras', action='store_true')
     parser.add_argument('--camera-extrinsics', choices=['ego-to-camera', 'camera-to-ego'])

@@ -1,4 +1,17 @@
-# Môi trường PNXK LiDAR-only trên RTX 5060
+# Môi trường PNKX LiDAR-only trên RTX 5060
+
+> **Cập nhật profile nuScenes:** Các thông số/kết quả bên dưới mô tả bản debug
+> BEV 128 cũ. Xem [profile mới và cách chạy](pnkx-nuscenes-profile.md) cho BEV 180,
+> FP16, CBGS, augmentation và lịch train theo nuScenes. Đã sửa thêm quy ước
+> LWH/yaw → WLH/yaw legacy ở dataset; checkpoint debug cũ cần train lại.
+> Các lệnh wrapper có hậu tố `-debug` dưới đây dùng config debug hiện hành.
+
+
+Tên chuẩn hiện tại là **PNKX**. Các kết quả train/verify ngày 19/10/2026 bên dưới
+là lịch sử của mẫu VF6_01. Converter hiện đã map camera sau VF6_03 từ
+`CAM_P_B_New`, dùng calibration cùng tên; xem profile mới bên dưới.
+Xem [đối chiếu PNKX/nuScenes và trạng thái split mới](pnkx-vs-nuscenes.md).
+Các link `runs/pnxk-*`, `outputs/pnxk-*` được giữ để trỏ đúng artifact lịch sử.
 
 ## Môi trường đã xác nhận ngày 19/10/2026
 
@@ -32,8 +45,8 @@ Chạy từ checkout này, với quyền truy cập Docker và NVIDIA Container 
 ```bash
 nvidia-smi
 docker images
-bash tools/pnxk_docker.sh prepare
-bash tools/pnxk_docker.sh check
+bash tools/pnkx_docker.sh prepare
+bash tools/pnkx_docker.sh check-debug
 ```
 
 `prepare` chép extension `.so` từ `/workspace/bevfusion-adapter/mmdet3d/ops`
@@ -42,30 +55,30 @@ Chỉ dùng chúng với Python/Torch/CUDA ABI của image đã tạo ra chúng;
 prepare khi thay image. Binaries không phải phần source đã commit.
 
 `check` mount checkout vào `/work`, đặt `PYTHONPATH=/work`, dùng UID/GID của
-người chạy để file output không thuộc root. Điều này bảo đảm import code PNXK
+người chạy để file output không thuộc root. Điều này bảo đảm import code PNKX
 hiện tại, không vô tình train code cũ được đóng sẵn trong image.
 
 Kết quả kiểm tra batch đầu: 172.514 point trong phạm vi train, tensor point
 5 chiều, tensor ảnh rỗng `(0, 3, 1, 1)` vì LiDAR-only. Train và val collate đều qua.
 
-Có thể chọn image bằng biến `PNXK_IMAGE`, nhưng image thay thế phải có cùng
+Có thể chọn image bằng biến `PNKX_IMAGE`, nhưng image thay thế phải có cùng
 cấu trúc thư mục extension và dependency phù hợp. Máy khác cần có image này
 hoặc build lại môi trường tương đương; wrapper không tự tải/build image.
 
 ## Train một GPU
 
 ```bash
-bash tools/pnxk_docker.sh train
+bash tools/pnkx_docker.sh train-debug
 ```
 
 Lệnh mặc định chạy 1 epoch, batch 1, FP32, từ khởi tạo mới trên 171 frame,
 validation 171 frame. Train/val hiện trùng recording theo chủ đích debug.
-Output: `runs/pnxk-lidar-single-gpu/`.
+Output: `runs/pnkx-lidar-single-gpu/`.
 
 Có thể thêm tham số cuối, ví dụ chọn run mới và 2 epoch:
 
 ```bash
-bash tools/pnxk_docker.sh train --run-dir runs/pnxk-lidar-debug-2epochs --max_epochs 2
+bash tools/pnkx_docker.sh train-debug --run-dir runs/pnkx-lidar-debug-2epochs --max_epochs 2
 ```
 
 Wrapper dùng `--launcher none`, không qua MPI hoặc process group NCCL.
@@ -109,4 +122,4 @@ Checkpoint/log nằm trong `runs/` đã gitignore, không tự đi kèm source k
    không bắt buộc cài FlashAttention khi chỉ chạy LiDAR.
 
 Hai thay đổi cuối đã có bản tương ứng trong image; đã đối chiếu rồi áp dụng
-vào source hiện tại. Không chép đè dataset/model từ image lên adapter PNXK.
+vào source hiện tại. Không chép đè dataset/model từ image lên adapter PNKX.

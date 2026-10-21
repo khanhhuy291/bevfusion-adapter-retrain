@@ -1,8 +1,21 @@
-# Giải thích luồng PNXK: verify → raw → dataset → LiDAR-only → fusion
+# Giải thích luồng PNKX: verify → raw → dataset → LiDAR-only → fusion
+
+> **Cập nhật profile nuScenes:** Các thông số/kết quả bên dưới mô tả bản debug
+> BEV 128 cũ. Xem [profile mới và cách chạy](pnkx-nuscenes-profile.md) cho BEV 180,
+> FP16, CBGS, augmentation và lịch train theo nuScenes. Đã sửa thêm quy ước
+> LWH/yaw → WLH/yaw legacy ở dataset; checkpoint debug cũ cần train lại.
+> Các lệnh wrapper có hậu tố `-debug` dưới đây dùng config debug hiện hành.
+
+
+Tên chuẩn hiện tại là **PNKX**. Các kết quả train/verify ngày 19/10/2026 bên dưới
+là lịch sử của mẫu VF6_01. Converter hiện đã map camera sau VF6_03 từ
+`CAM_P_B_New`, dùng calibration cùng tên; xem profile mới bên dưới.
+Xem [đối chiếu PNKX/nuScenes và trạng thái split mới](pnkx-vs-nuscenes.md).
+Các link `runs/pnxk-*`, `outputs/pnxk-*` được giữ để trỏ đúng artifact lịch sử.
 
 Tài liệu này giải thích code đang có trong repo, từ dữ liệu trên ổ đĩa tới
 trọng số model. Ngày rà soát: 19/10/2026. Các ví dụ số lấy từ chunk mẫu hiện tại.
-Các lệnh chạy đầy đủ nằm trong [pnxk-fusion-from-raw.md](pnxk-fusion-from-raw.md).
+Các lệnh chạy đầy đủ nằm trong [pnkx-fusion-from-raw.md](pnkx-fusion-from-raw.md).
 
 ## 1. Trước hết: có ba quá trình khác nhau
 
@@ -26,7 +39,7 @@ flowchart TD
     V[Verify hệ tọa độ, thời gian và projection]
     C[Converter offline]
     K[Cache: BIN, JPG undistort, infos PKL]
-    D[PNXKDataset: lấy một frame và annotation]
+    D[PNKXDataset: lấy một frame và annotation]
     P[Pipeline: load, crop, normalize, filter, format]
     B[DataLoader: batch và chuyển GPU]
     L[LiDAR encoder]
@@ -79,7 +92,7 @@ Vì vậy cần chứng minh các thông tin hình học hợp lý trước khi 
 
 ### 3.1. Thống kê cấu trúc và label
 
-Đầu vào: cây `Data-PNXK/data`, `label`, `split` và JSON calibration.
+Đầu vào: cây `Data-PNKX/data`, `label`, `split` và JSON calibration.
 
 Đã xác nhận trong mẫu:
 
@@ -153,12 +166,12 @@ calibration reprojection error.
 
 ## 4. Converter: biến thư mục raw thành thứ train đọc được
 
-Code: [`tools/data_converter/pnxk_converter.py`](../tools/data_converter/pnxk_converter.py).
+Code: [`tools/data_converter/pnkx_converter.py`](../tools/data_converter/pnkx_converter.py).
 Converter chạy độc lập với mmcv/mmdet và không dùng GPU.
 
 ### 4.1. Đọc split và duyệt recording/chunk
 
-Input: `train.txt`, `val.txt`, `--root Data-PNXK`.
+Input: `train.txt`, `val.txt`, `--root Data-PNKX`.
 
 `read_split()` lấy recording name từ dòng TXT, chấp nhận tên thuần hoặc đường
 dẫn cũ kết thúc ở recording. Kiểm tra recording tồn tại và không lặp trong một file.
@@ -279,8 +292,8 @@ trọng số model. BIN/JPG lưu dữ liệu lớn; PKL cho biết lấy ở đ�
 
 ## 5. Dataset: từ một dòng infos tới dữ liệu một frame
 
-Code: [`mmdet3d/datasets/pnxk_dataset.py`](../mmdet3d/datasets/pnxk_dataset.py).
-Đăng ký trong `mmdet3d/datasets/__init__.py` để config có thể gọi `type: PNXKDataset`.
+Code: [`mmdet3d/datasets/pnkx_dataset.py`](../mmdet3d/datasets/pnkx_dataset.py).
+Đăng ký trong `mmdet3d/datasets/__init__.py` để config có thể gọi `type: PNKXDataset`.
 
 Input: PKL, cache root, config pipeline/modality. Output: dict chuẩn mà pipeline
 của repo hiểu được. Dataset không tự đọc LAZ và không undistort ảnh.
@@ -303,7 +316,8 @@ Không dùng nguyên 10 class nuScenes, không gán Rider tùy ý sang riêng mo
 Cache giữ tâm hình học, framework nội bộ dùng tâm đáy. Dùng:
 
 ```python
-LiDARInstance3DBoxes(boxes, box_dim=7, origin=(0.5, 0.5, 0.5))
+internal = raw_boxes_to_internal(boxes)
+LiDARInstance3DBoxes(internal, box_dim=7, origin=(0.5, 0.5, 0.5))
 ```
 
 Constructor chuyển đúng một lần về origin nội bộ `(0.5,0.5,0)`.
@@ -315,9 +329,18 @@ label:  x=9.0578, y=0.9991, z_center=0.6992, height=1.5288
 internal z_bottom = 0.6992 - 1.5288/2 = -0.0652
 ```
 
-X/y, length/width/height và yaw giữ quy ước đã xác nhận. Không đổi trục x/y vì tên
-lớp là LiDARInstance3DBoxes: ta dùng lớp đó để biểu diễn box trong ego có cùng quy
-ước x trước/y trái/z lên. Không truyền origin tâm đáy cho box vẫn còn tâm hình học.
+X/y và hệ trục ego giữ nguyên. Tuy nhiên, phiên bản `LiDARInstance3DBoxes` trong
+repo này dùng thứ tự kích thước **width, length, height** và quy ước góc khác label.
+`raw_boxes_to_internal()` trong `mmdet3d/datasets/pnkx_geometry.py` đổi
+`[length,width,height,yaw_raw]` thành `[width,length,height,-yaw_raw-π/2]`, giống
+converter nuScenes của repo. Ví dụ yaw raw bằng 0, xe dài theo +x, phải thành
+yaw nội bộ −π/2. Sau phép đổi này tám góc vật lý của box vẫn giữ nguyên.
+
+Đây là sửa lỗi bổ sung khi rà soát profile nuScenes: bản adapter trước chỉ đổi
+origin nên chưa biểu diễn đúng hướng box. Checkpoint debug trước lần sửa này
+cần train lại. Cache vẫn giữ quy ước raw, không phải convert lại cache vì sửa này.
+Test mới so sánh tám góc vật lý và kiểm tra box/point cùng quay, scale, translate,
+flip. Không truyền origin tâm đáy cho box vẫn còn tâm hình học.
 
 ### 5.3. `get_data_info()` và ma trận
 
@@ -342,7 +365,7 @@ này cho tracking toàn cục hay ghép sweep lịch sử.
 
 ## 6. Pipeline: load, filter, resize và đóng batch
 
-Pipeline nằm trong [`configs/pnxk/default.yaml`](../configs/pnxk/default.yaml),
+Pipeline nằm trong [`configs/pnkx/default.yaml`](../configs/pnkx/default.yaml),
 được chọn theo `use_camera`. Bốn danh sách train/test cho LiDAR/fusion được giữ
 riêng để tránh loader camera chạy khi LiDAR-only.
 
@@ -359,7 +382,7 @@ riêng để tránh loader camera chạy khi LiDAR-only.
 | PointShuffle, chỉ train | Point | Đảo thứ tự, không đổi tọa độ |
 | ImageNormalize, chỉ fusion | Ảnh RGB | Tensor float được normalize |
 | DefaultFormatBundle3D | Point/ảnh/box | Tensor và DataContainer |
-| PNXKCollect3D | Dict pipeline | Các đối số cần cho BEVFusion.forward |
+| PNKXCollect3D | Dict pipeline | Các đối số cần cho BEVFusion.forward |
 
 Point range hiện tại là `[-51.2,-51.2,-5,51.2,51.2,3]` mét. Frame đầu có
 216.495 point trong cache, còn 172.514 point sau filter. Converter không crop cloud
@@ -407,14 +430,14 @@ tensor, không ép mọi cloud có cùng N. Box cũng là list object theo sampl
 DataContainer giúp mmcv biết dữ liệu nào stack, dữ liệu nào giữ list và metadata
 nào để trên CPU. Scatter sau đó đưa tensor cần thiết sang GPU.
 
-`PNXKCollect3D` cung cấp ảnh rỗng cho LiDAR-only và `depths` rỗng cho cả hai chế độ
+`PNKXCollect3D` cung cấp ảnh rỗng cho LiDAR-only và `depths` rỗng cho cả hai chế độ
 vì chữ ký forward của repo yêu cầu chúng. Đây là đối số không dùng trong nhánh
 tương ứng, không phải tạo sáu ảnh giả để train.
 
 ## 7. LiDAR-only: từ point tới box dự đoán
 
 Model: [`BEVFusion`](../mmdet3d/models/fusion_models/bevfusion.py), nhưng config
-[`lidar.yaml`](../configs/pnxk/lidar.yaml) tắt camera, fuser bằng null.
+[`lidar.yaml`](../configs/pnkx/lidar.yaml) tắt camera, fuser bằng null.
 
 ```text
 point ego [N,5]
@@ -464,7 +487,7 @@ Fusion hiện khởi tạo mới; không tự lấy checkpoint LiDAR-only làm p
 
 ## 8. Fusion: nhánh ảnh tạo BEV thế nào?
 
-Config: [`configs/pnxk/fusion.yaml`](../configs/pnxk/fusion.yaml).
+Config: [`configs/pnkx/fusion.yaml`](../configs/pnkx/fusion.yaml).
 
 ```text
 ảnh [B,6,3,256,704]
@@ -626,13 +649,13 @@ có velocity. Không tạo velocity GT bằng zero để model học một thôn
 Không. GT vật lý có 7 số:
 
 ```text
-x, y, z_bottom, length, width, height, yaw
+x, y, z_bottom, width, length, height, yaw_internal
 ```
 
 Coder encode thành target 8 số:
 
 ```text
-x_feature, y_feature, z_center, log(length), log(width), log(height), sin(yaw), cos(yaw)
+x_feature, y_feature, z_center, log(width), log(length), log(height), sin(yaw_internal), cos(yaw_internal)
 ```
 
 Yaw chuyển thành hai số để tránh gián đoạn ở ±π. Encode cộng height/2 để lấy
@@ -659,7 +682,7 @@ vào tổng. Loss tổng truyền ngược qua head, decoder, fuser và cả hai
 
 Entry: [`tools/train.py`](../tools/train.py).
 
-1. Đọc config recursive: `configs/default.yaml` → `configs/pnxk/default.yaml`
+1. Đọc config recursive: `configs/default.yaml` → `configs/pnkx/default.yaml`
    → file lidar/fusion, rồi áp tham số CLI.
 2. Resolve biểu thức `${...}`; ví dụ `use_camera` chọn đúng pipeline.
 3. Tạo dataset, model, đặt seed và lưu config đã resolve.
@@ -680,7 +703,7 @@ theo epoch nhận đúng epoch. Hiện augmentation phức tạp đã tắt như
 Host Python và container Python là hai môi trường khác nhau. Docker image có
 Torch/CUDA/mmcv và extension đã build cho RTX 5060; host base không có đủ stack.
 
-[`tools/pnxk_docker.sh`](../tools/pnxk_docker.sh):
+[`tools/pnkx_docker.sh`](../tools/pnkx_docker.sh):
 
 - `prepare`: lấy `.so` từ image về đúng thư mục source, không chép model/dataset cũ.
 - mount checkout vào `/work`, đặt PYTHONPATH để chạy source hiện tại.
@@ -708,9 +731,9 @@ Sau train epoch:
 - CheckpointHook lưu `epoch_1.pth` cùng optimizer state và metadata epoch/iteration.
 - EvalHook chuyển model sang eval, chạy không gradient trên val.
 - Encoder/head dự đoán box, score, class; GT dùng để chấm, không dùng để tạo prediction.
-- `PNXKDataset.evaluate()` gọi evaluator riêng, không yêu cầu schema nuScenes SDK.
+- `PNKXDataset.evaluate()` gọi evaluator riêng, không yêu cầu schema nuScenes SDK.
 
-`pnxk_metrics.py` dùng AP theo khoảng cách tâm XY ở 0,5/1/2/4 m. Match cùng
+`pnkx_metrics.py` dùng AP theo khoảng cách tâm XY ở 0,5/1/2/4 m. Match cùng
 class/cùng frame, score cao trước, mỗi GT chỉ match một lần. Metric này không
 đánh giá yaw và kích thước; không phải IoU 3D AP hoặc NDS.
 
@@ -727,19 +750,19 @@ không chứa raw dataset. `configs.yaml` cạnh checkpoint giúp biết cấu h
 
 | Nhóm | File | Vai trò |
 | --- | --- | --- |
-| Convert mới | tools/data_converter/pnxk_converter.py | Raw/split/calibration → cache |
-| Dataset mới | mmdet3d/datasets/pnxk_dataset.py | Metadata → interface dataset/pipeline |
+| Convert mới | tools/data_converter/pnkx_converter.py | Raw/split/calibration → cache |
+| Dataset mới | mmdet3d/datasets/pnkx_dataset.py | Metadata → interface dataset/pipeline |
 | Registry | mmdet3d/datasets/__init__.py | Đăng ký dataset và collect mới |
-| Metric mới | mmdet3d/datasets/pnxk_metrics.py | AP diagnostic độc lập nuScenes |
-| Config mới | configs/pnxk/default.yaml, lidar.yaml, fusion.yaml | 3 class, pipeline và hai chế độ |
-| Head | mmdet3d/models/heads/bbox/transfusion.py | Nhánh PNXK dùng đúng class index, không truy cập class 8/9 |
+| Metric mới | mmdet3d/datasets/pnkx_metrics.py | AP diagnostic độc lập nuScenes |
+| Config mới | configs/pnkx/default.yaml, lidar.yaml, fusion.yaml | 3 class, pipeline và hai chế độ |
+| Head | mmdet3d/models/heads/bbox/transfusion.py | Nhánh PNKX dùng đúng class index, không truy cập class 8/9 |
 | DepthLSS | mmdet3d/models/vtransforms/depth_lss.py | Khớp interface mats_dict và scalar-depth channel |
 | Projection/pooling | mmdet3d/models/vtransforms/base.py | Không sửa point, lọc depth, nearest pixel, đúng biên voxel |
 | Pipeline | mmdet3d/datasets/pipelines/transforms_3d.py | Thay alias np.bool bằng bool trong lọc label |
 | Thực thi | tools/train.py, mmdet3d/apis/train.py, utils/torch_compat.py | Single GPU và tương thích runtime |
-| Wrapper | tools/pnxk_docker.sh | prepare/check/audit/train cho hai chế độ |
-| Kiểm chứng | tools/check_pnxk.py, tools/check_pnxk_fusion.py | Cache/pipeline và gradient GPU |
-| Regression | tests/test_pnxk.py, tests/test_pnxk_vtransform.py | Các lỗi dữ liệu/hình học cụ thể |
+| Wrapper | tools/pnkx_docker.sh | prepare/check/audit/train cho hai chế độ |
+| Kiểm chứng | tools/check_pnkx.py, tools/check_pnkx_fusion.py | Cache/pipeline và gradient GPU |
+| Regression | tests/test_pnkx.py, tests/test_pnkx_vtransform.py | Các lỗi dữ liệu/hình học cụ thể |
 
 Phần lớn backbone, decoder, loss, coder và cơ chế BEVFusion vẫn là implementation
 có sẵn. Không viết lại một BEVFusion khác hoặc chuyển raw thành toàn bộ database nuScenes.
@@ -755,7 +778,7 @@ có sẵn. Không viết lại một BEVFusion khác hoặc chuyển raw thành 
 5. Bảy tests CPU qua, gồm synthetic nhiều recording/chunk, overlap, timestamp,
    calibration, label, AP và depth transform.
 6. Audit GPU hiện tại kiểm tra gradient hai encoder/fuser, shape và point giữ nguyên;
-   báo cáo mới lưu riêng `outputs/pnxk-fusion-review-audit.json`.
+   báo cáo mới lưu riêng `outputs/pnkx-fusion-review-audit.json`.
 
 Audit mới thoát mã 0: camera 218 tensor gradient, LiDAR 63, fuser 3; các gradient
 đều hữu hạn và tổng trị tuyệt đối khác 0. Point giữ nguyên; loss 130,0872 hữu hạn.

@@ -1,0 +1,2 @@
+# LiDAR-only: author-style 20 epochs and cyclic schedule.
+use_camera: false

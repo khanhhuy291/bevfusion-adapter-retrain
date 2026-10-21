@@ -1,4 +1,17 @@
-# Quy trình kiểm chứng dữ liệu PNXK trước khi adapt BEVFusion
+# Quy trình kiểm chứng dữ liệu PNKX trước khi adapt BEVFusion
+
+> **Cập nhật profile nuScenes:** Các thông số/kết quả bên dưới mô tả bản debug
+> BEV 128 cũ. Xem [profile mới và cách chạy](pnkx-nuscenes-profile.md) cho BEV 180,
+> FP16, CBGS, augmentation và lịch train theo nuScenes. Đã sửa thêm quy ước
+> LWH/yaw → WLH/yaw legacy ở dataset; checkpoint debug cũ cần train lại.
+> Các lệnh wrapper có hậu tố `-debug` dưới đây dùng config debug hiện hành.
+
+
+Tên chuẩn hiện tại là **PNKX**. Các kết quả train/verify ngày 19/10/2026 bên dưới
+là lịch sử của mẫu VF6_01. Converter hiện đã map camera sau VF6_03 từ
+`CAM_P_B_New`, dùng calibration cùng tên; xem profile mới bên dưới.
+Xem [đối chiếu PNKX/nuScenes và trạng thái split mới](pnkx-vs-nuscenes.md).
+Các link `runs/pnxk-*`, `outputs/pnxk-*` được giữ để trỏ đúng artifact lịch sử.
 
 Ngày thực hiện: 19/10/2026.
 
@@ -7,7 +20,7 @@ Ngày thực hiện: 19/10/2026.
 Kiểm tra khả năng đọc LAZ, quy ước box, đồng bộ timestamp và chiều extrinsics
 trước khi viết converter/dataset cho BEVFusion. Chưa thay đổi pipeline train.
 
-Dữ liệu khảo sát nằm trong `Data-PNXK`, với recording
+Dữ liệu khảo sát nằm trong `Data-PNKX`, với recording
 `20260228_1105_VF6_01_1772251511_1772254880`, chunk
 `37_1772252610_1772252644`.
 
@@ -159,6 +172,10 @@ Không áp dụng chung quy tắc “mọi extrinsics JSON đều sensor → ego
 
 ## 8. Chạy lại và xem kết quả
 
+Script khảo sát trong outputs là bản lưu lịch sử còn hardcode raw root `Data-PNXK`.
+Muốn chạy lại script đó sau đổi tên, cần cập nhật raw root thành `Data-PNKX` và
+kiểm tra recording/calibration được chọn; converter hiện tại đã dùng tên PNKX.
+
 Script kiểm chứng đã lưu tại
 [`outputs/pnxk-inspection/inspect_pnxk.py`](../outputs/pnxk-inspection/inspect_pnxk.py).
 Script hiện cố định root workspace, chunk mẫu và calibration period đầu tiên;
@@ -167,7 +184,7 @@ cần cập nhật khi chuyển máy hoặc kiểm tra recording khác.
 Dependency kiểm chứng được cài riêng vào `/tmp`, không thay đổi môi trường train:
 
 ```bash
-python -m pip install --target /tmp/pnxk-inspect-deps --no-deps laspy lazrs opencv-python-headless
+python -m pip install --target /tmp/pnkx-inspect-deps --no-deps laspy lazrs opencv-python-headless
 mkdir -p outputs/pnxk-inspection
 python outputs/pnxk-inspection/inspect_pnxk.py
 ```
@@ -188,7 +205,7 @@ Ví dụ:
 - [Sáu camera, frame giữa](../outputs/pnxk-inspection/1772252627-099736452_all_cameras.jpg).
 - [BEV, frame đầu](../outputs/pnxk-inspection/1772252610-099740267_bev.jpg).
 
-`outputs/*` và `Data-PNXK/*` đang được gitignore. Tài liệu này được lưu trong docs;
+`outputs/*` và `Data-PNKX/*` đang được gitignore. Tài liệu này được lưu trong docs;
 script/ảnh dẫn tới ở trên là artifact cục bộ, không tự đi kèm khi clone repo.
 
 ## 9. Giới hạn và hệ quả cho adapter

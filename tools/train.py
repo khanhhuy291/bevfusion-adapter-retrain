@@ -3,6 +3,7 @@ import copy
 import os
 import random
 import time
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -32,6 +33,13 @@ def main():
     configs.update(opts)
 
     cfg = Config(recursive_eval(configs), filename=args.config)
+    if cfg.get('use_camera') and cfg.get('camera_pretrained'):
+        checkpoint = cfg.camera_pretrained
+        if not checkpoint.startswith(('http://', 'https://')) and not Path(checkpoint).is_file():
+            raise FileNotFoundError('Missing camera pretrained: {}. See docs/pnkx-nuscenes-profile.md'.format(checkpoint))
+    if cfg.get('load_from') and not cfg.load_from.startswith(('http://', 'https://')):
+        if not Path(cfg.load_from).is_file():
+            raise FileNotFoundError('Missing pretrained model: {}. See docs/pnkx-nuscenes-profile.md'.format(cfg.load_from))
 
     torch.backends.cudnn.benchmark = cfg.cudnn_benchmark
     torch.cuda.set_device(dist.local_rank())
